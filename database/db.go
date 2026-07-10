@@ -12,28 +12,28 @@ import (
 
 var DB *sql.DB
 
-var ErrAccountNotFound = errors.New("hesap bulunamadı")
+var ErrAccountNotFound = errors.New("Account not Found!")
 
 func InitDB() {
 	connStr := "host=127.0.0.1 port=5432 user=postgres password=1234 dbname=copilot_money sslmode=disable"
 	var err error
 	DB, err = sql.Open("postgres", connStr)
 	if err != nil {
-		log.Fatal("Bağlantı ayarı başarısız:", err)
+		log.Fatal("Connection is unsuccessful:", err)
 	}
 
 	err = DB.Ping()
 	if err != nil {
-		log.Fatal("Veritabanına bağlanılamadı:", err)
+		log.Fatal("Couldn't connect to Database:", err)
 	}
-	fmt.Println("Veritabanına başarıyla bağlanıldı!")
+	fmt.Println("Has Been Connected to Database!")
 }
 
 func CreateAccount(name string, userID int) error {
 	query := `INSERT INTO accounts (name, user_id) VALUES ($1, $2);`
 	_, err := DB.Exec(query, name, userID)
 	if err != nil {
-		return fmt.Errorf("hesap oluşturulamadı: %v", err)
+		return fmt.Errorf("Account couldn't be created: %v", err)
 	}
 	return nil
 }
@@ -48,7 +48,7 @@ func GetAccount(accountID int) (*models.Account, error) {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrAccountNotFound
 		}
-		return nil, fmt.Errorf("hesap getirilemedi: %v", err)
+		return nil, fmt.Errorf("Account Couldn't Be Fetched: %v", err)
 	}
 
 	return &acc, nil
