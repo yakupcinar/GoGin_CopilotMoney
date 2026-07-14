@@ -28,7 +28,7 @@ func InitDB() { //InitDB should return err or something so you can handle it on 
 
 	err = DB.Ping()
 	if err != nil {
-		log.Fatal("Couldn't connect to Database:", err) // Burada direkt killemek yerine değeri döndürüp main'e orada checkle kapamak nasıl olurdu Mentor!
+		log.Fatal("Couldn't connect to Database:", err)
 	}
 	fmt.Println("Has Been Connected to Database!")
 
@@ -39,6 +39,21 @@ func InitDB() { //InitDB should return err or something so you can handle it on 
 
 func migrate() error {
 	schema := `
+	CREATE TABLE IF NOT EXISTS users (
+		id SERIAL PRIMARY KEY,
+		username VARCHAR(20) UNIQUE NOT NULL,
+		password_hash TEXT NOT NULL,
+		is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+		created_at TIMESTAMP NOT NULL DEFAULT now()
+	);
+
+	CREATE TABLE IF NOT EXISTS accounts (
+		id SERIAL PRIMARY KEY,
+		name VARCHAR(16) NOT NULL,
+		user_id INT NOT NULL REFERENCES users(id),
+		created_at TIMESTAMP NOT NULL DEFAULT now()
+	);
+
 	CREATE TABLE IF NOT EXISTS categories (
 		id SERIAL PRIMARY KEY,
 		name VARCHAR(30) NOT NULL,
@@ -259,3 +274,8 @@ func DeleteTransaction(transactionID int) error {
 	}
 	return nil
 }
+
+
+// ORM
+// Reposority patern
+// db.go'da ayrıma git user, transaction Migrate etc.
