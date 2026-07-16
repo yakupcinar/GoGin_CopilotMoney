@@ -1,0 +1,26 @@
+Has Been Connected to Database!
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /register                 --> main.main.func1 (3 handlers)
+[GIN-debug] POST   /login                    --> main.main.func2 (3 handlers)
+[GIN-debug] POST   /accounts                 --> main.main.func3 (4 handlers)
+[GIN-debug] GET    /accounts/:id             --> main.main.func4 (4 handlers)
+[GIN-debug] PUT    /accounts/:id             --> main.main.func5 (4 handlers)
+[GIN-debug] DELETE /accounts/:id             --> main.main.func6 (4 handlers)
+[GIN-debug] POST   /categories               --> main.main.func7 (4 handlers)
+[GIN-debug] GET    /categories               --> main.main.func8 (4 handlers)
+[GIN-debug] POST   /transactions             --> main.main.func9 (4 handlers)
+[GIN-debug] GET    /transactions/:id         --> main.main.func10 (4 handlers)
+[GIN-debug] GET    /accounts/:id/transactions --> main.main.func11 (4 handlers)
+[GIN-debug] PUT    /transactions/:id         --> main.main.func12 (4 handlers)
+[GIN-debug] DELETE /transactions/:id         --> main.main.func13 (4 handlers)
+[GIN-debug] PUT    /categories/:id           --> main.main.func14 (4 handlers)
+[GIN-debug] DELETE /categories/:id           --> main.main.func15 (4 handlers)
+[GIN-debug] [WARNING] You trusted all proxies, this is NOT safe. We recommend you to set a value.
+Please check https://github.com/gin-gonic/gin/blob/master/docs/doc.md#dont-trust-all-proxies for details.
+[GIN-debug] Listening and serving HTTP on :8080
+2026/07/14 17:15:16 {"time":"2026-07-14T17:15:16+03:00","method":"PUT","path":"","status":404,"success":false,"latency_ms":1,"client_ip":"127.0.0.1","user_id":null}
+2026/07/14 17:15:16 {"time":"2026-07-14T17:15:16+03:00","method":"PUT","path":"","status":404,"success":false,"latency_ms":0,"client_ip":"127.0.0.1","user_id":null}
+signal: interrupt

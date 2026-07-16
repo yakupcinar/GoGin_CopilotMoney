@@ -3,11 +3,14 @@ package auth
 import (
 	"time"
 	"errors"
+	"os"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var jwtSecret = []byte("gecici-cok-gizli-anahtar")
+func jwtSecret() []byte {
+	return []byte(os.Getenv("JWT_SECRET"))
+}
 
 func GenerateToken(userID int, isAdmin bool) (string, error) {
 	claims := jwt.MapClaims{ //jwt ileride .env'a taşınması gerekir 	
@@ -16,12 +19,12 @@ func GenerateToken(userID int, isAdmin bool) (string, error) {
 		"exp": time.Now().Add(1 * time.Hour).Unix(), //Tokeni kullanıcı logout olsa bile duruyor bakılacak !
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	return token.SignedString(jwtSecret())
 }
 
 func ValidateToken(tokenString string,) (int, bool, error) {
 	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) { // Burada t.Method'un gerçekten HS256 olup olmadığı kontrol edilmiyor. 
-		return jwtSecret, nil
+		return jwtSecret(), nil
 	})
 	if err != nil || !token.Valid {
 		return 0, false, errors.New("Invalid token")

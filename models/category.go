@@ -11,3 +11,9 @@ type CreateCategoryInput struct {
 	Name string `json:"name" binding:"required,max=30"`
 	Type string `json:"type" binding:"required,oneof=income expense"`
 }
+
+type UpdateCategoryInput struct {
+	Name string `json:"name" binding:"required,max=30"`
+	Type string `json:"type" binding:"required,oneof=income expense"`
+}
+

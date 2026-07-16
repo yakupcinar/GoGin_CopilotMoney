@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"github.com/lib/pq"
 )
 
@@ -16,10 +17,18 @@ var ErrUsernameTaken = errors.New("Username Aldready Exist!")
 var ErrUserNotFound = errors.New("User Not Found!")
 var ErrCategoryNotFound = errors.New("Category Not Found!")
 var ErrTransactionNotFound = errors.New("Transaction Not Found!")
+var ErrCategoryInUse = errors.New("Category Is In Use!")
 
 
 func InitDB() { //InitDB should return err or something so you can handle it on !
-	connStr := "host=127.0.0.1 port=5432 user=postgres password=1234 dbname=copilot_money sslmode=disable"
+	connStr := fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		os.Getenv("DB_HOST"),
+		os.Getenv("DB_PORT"),
+		os.Getenv("DB_USER"),
+		os.Getenv("DB_PASSWORD"),
+		os.Getenv("DB_NAME"),
+	)
 	var err error
 	DB, err = sql.Open("postgres", connStr)
 	if err != nil {
@@ -275,7 +284,54 @@ func DeleteTransaction(transactionID int) error {
 	return nil
 }
 
+func GetCategory(categoryID int) (*models.Category, error) {
+	query := `SELECT id, name, type, user_id FROM categories WHERE id = $1;`
+	row := DB.QueryRow(query, categoryID)
 
-// ORM
-// Reposority patern
-// db.go'da ayrıma git user, transaction Migrate etc.
+	var cat models.Category
+	err := row.Scan(&cat.ID, &cat.Name, &cat.Type, &cat.UserID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrCategoryNotFound
+		}
+		return nil, fmt.Errorf("Category Couldn't Be Fetched: %v", err)
+	}
+	return &cat, nil
+}
+
+func UpdateCategory(categoryID int, name, categoryType string) error {
+	query := `UPDATE categories SET name = $1, type = $2 WHERE id = $3;`
+	result, err := DB.Exec(query, name, categoryType, categoryID)
+	if err != nil {
+		return fmt.Errorf("Category couldn't be updated: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("Affected row number didn't come: %v", err)
+	}
+	if rowsAffected == 0 {
+		return ErrCategoryNotFound
+	}
+	return nil
+}
+
+func DeleteCategory(categoryID int) error {
+	query := `DELETE FROM categories WHERE id = $1;`
+	result, err := DB.Exec(query, categoryID)
+	if err != nil {
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23503" {
+			return ErrCategoryInUse
+		}
+		return fmt.Errorf("Category can't deleted: %v", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("Affected row number didn't come: %v", err)
+	}
+	if rowsAffected == 0 {
+		return ErrCategoryNotFound
+	}
+	return nil
+}
+
