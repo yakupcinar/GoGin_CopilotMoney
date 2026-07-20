@@ -12,7 +12,7 @@ func jwtSecret() []byte {
 	return []byte(os.Getenv("JWT_SECRET"))
 }
 
-func GenerateToken(userID int, isAdmin bool) (string, error) {
+func GenerateToken(userID int, isAdmin bool) (string, error) { // token invalid çek süre kontrolü. verilen süre öncesi expire olmadan 
 	claims := jwt.MapClaims{ //jwt ileride .env'a taşınması gerekir 	
 		"user_id": userID,
 		"is_admin": isAdmin,

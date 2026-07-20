@@ -25,7 +25,6 @@ func registerCustomValidators() { // To new file this func
 	})
 }
 
-
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using system environment variables")
