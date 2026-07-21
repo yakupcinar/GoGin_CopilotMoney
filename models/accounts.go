@@ -3,14 +3,14 @@ package models
 import "time"
 
 type Account struct {
-	ID        int       `json:"id"`
-	Name      string    `json:"name"`
-	UserID    int       `json:"user_id"`
+	ID        int       `json:"id" gorm:"primaryKey"`
+	Name      string    `json:"name" gorm:"size:16;not null"`
+	UserID    int       `json:"user_id" gorm:"not null"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
 type CreateAccountInput struct {
-	Name   string `json:"name" binding:"required,max=30,accountname"` // Yani "Ana Hesap", "Ziraat 2", "Kredi Kartı" gibi gayet normal isimler reddedilecek. Bunu muhtemelen gevşetmen gerekecek (örn. alphanumunicode + boşluğa izin veren custom regex).
+	Name string `json:"name" binding:"required,max=30,accountname"`
 }
 
 type UpdateAccountInput struct {

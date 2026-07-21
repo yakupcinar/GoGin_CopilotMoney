@@ -1,9 +1,12 @@
 package auth
 
 import (
-	"time"
+	"GoGinMoneyCopilot/models"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"os"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -12,35 +15,71 @@ func jwtSecret() []byte {
 	return []byte(os.Getenv("JWT_SECRET"))
 }
 
-func GenerateToken(userID int, isAdmin bool) (string, error) { // token invalid çek süre kontrolü. verilen süre öncesi expire olmadan 
-	claims := jwt.MapClaims{ //jwt ileride .env'a taşınması gerekir 	
+func generateJTI() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+type TokenClaims struct {
+	UserID  int
+	Role    models.Role
+	JTI     string
+	Expires time.Time
+}
+
+func GenerateToken(userID int, role models.Role) (string, error) {
+	jti, err := generateJTI()
+	if err != nil {
+		return "", err
+	}
+	claims := jwt.MapClaims{
 		"user_id": userID,
-		"is_admin": isAdmin,
-		"exp": time.Now().Add(1 * time.Hour).Unix(), //Tokeni kullanıcı logout olsa bile duruyor bakılacak !
+		"role":    string(role),
+		"jti":     jti,
+		"exp":     time.Now().Add(1 * time.Hour).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(jwtSecret())
 }
 
-func ValidateToken(tokenString string,) (int, bool, error) {
-	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) { // Burada t.Method'un gerçekten HS256 olup olmadığı kontrol edilmiyor. 
+func ValidateToken(tokenString string) (*TokenClaims, error) {
+	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
 		return jwtSecret(), nil
-	})
+	}, jwt.WithValidMethods([]string{"HS256"}))
 	if err != nil || !token.Valid {
-		return 0, false, errors.New("Invalid token")
+		return nil, errors.New("invalid token")
 	}
-	
+
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return 0, false, errors.New("Token content hadn't been read")
+		return nil, errors.New("token content hadn't been read")
 	}
 
 	userIDFloat, ok := claims["user_id"].(float64)
 	if !ok {
-		return 0, false, errors.New("User_id not found!")
+		return nil, errors.New("user_id not found")
 	}
+	jti, ok := claims["jti"].(string)
+	if !ok {
+		return nil, errors.New("jti not found")
+	}
+	expFloat, ok := claims["exp"].(float64)
+	if !ok {
+		return nil, errors.New("exp not found")
+	}
+	roleStr, _ := claims["role"].(string)
 
-	isAdmin, _ := claims["is_admin"].(bool)
-
-	return int(userIDFloat), isAdmin, nil
+	return &TokenClaims{
+		UserID:  int(userIDFloat),
+		Role:    models.Role(roleStr),
+		JTI:     jti,
+		Expires: time.Unix(int64(expFloat), 0),
+	}, nil
 }
+
+// token invalid çek süre kontrolü. verilen süre öncesi expire olmadan
+//Tokeni kullanıcı logout olsa bile duruyor bakılacak !
+// Burada t.Method'un gerçekten HS256 olup olmadığı kontrol edilmiyor. s

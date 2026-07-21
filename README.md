@@ -23,11 +23,17 @@ Todo List!
 **Repository Pattern kullan (sonra yapılacak)
 **signal.Notify ile SIGINT/SIGTERM'i yakalayıp, http.Server.Shutdown(ctx) ile "mevcut istekleri bitir, yeni istek alma, sonra düzgünce kapan" davranışı eklemek. (CTRL+C ile kapatınca make error alıyor; graceful shutdown'a çevir)
 **SSL ekle + Gin releasede çalıştır + Dockerhub + ... (en son sistemi büyütebildiğin kadar büyüt ve test et)
+***htp ai entegre kur farklı bir mainde free api key kullan system prompt user prompt denemesi yap, etc..	
 
 
 
-
-Notes !
+Notes!
 **Object-Relational Mapping: Veritabanı tablolarını, senin Go struct'larınla (Object) otomatik eşleştiren (Mapping) bir kütüphane/teknik. Amaç: elle SQL string'i yazıp, elle Scan() ile alan alan struct'a doldurmak yerine, bunu bir kütüphaneye devretmek. GORM go'da kullanılan en yaygın tipi Ex: db.First(&acc, accountID) farklı kullanımları var ama bu ORM oluyor FARKLI veritabanlarında çalışmana yarar!
 **Repository Pattern: İş mantığının (handler'ların), veritabanına doğrudan değil, bir soyutlama (interface) üzerinden erişmesini sağlayan bir mimari kalıp. Amaç: "nasıl veri çekiliyor" detayını (SQL, hangi DB motoru) iş mantığından tamamen gizlemek. 
 Ex:type AccountRepository interface { Create(name string, userID int) error } type PostgresAccountRepository struct { db *sql.DB }
+
+
+
+
+Utility Notes!
+git push origin main 	

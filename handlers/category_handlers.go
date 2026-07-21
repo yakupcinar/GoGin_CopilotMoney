@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"GoGinMoneyCopilot/database"
 	"GoGinMoneyCopilot/models"
+	"GoGinMoneyCopilot/repositories"
 	"errors"
 	"net/http"
 	"strconv"
@@ -10,7 +10,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func CreateCategory(c *gin.Context) {
+type CategoryHandler struct {
+	categories repositories.CategoryRepository
+}
+
+func NewCategoryHandler(categories repositories.CategoryRepository) *CategoryHandler {
+	return &CategoryHandler{categories: categories}
+}
+
+func (h *CategoryHandler) CreateCategory(c *gin.Context) {
 	var input models.CreateCategoryInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input format!"})
@@ -19,8 +27,8 @@ func CreateCategory(c *gin.Context) {
 
 	userID := c.MustGet("user_id").(int)
 
-	if err := database.CreateCategory(input.Name, input.Type, &userID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := h.categories.Create(input.Name, input.Type, &userID); err != nil {
+		respondInternalError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{
@@ -29,37 +37,37 @@ func CreateCategory(c *gin.Context) {
 	})
 }
 
-func ListCategories(c *gin.Context) {
+func (h *CategoryHandler) ListCategories(c *gin.Context) {
 	userID := c.MustGet("user_id").(int)
 
-	categories, err := database.GetCategoriesForUser(userID)
+	categories, err := h.categories.GetForUser(userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, categories)
 }
 
-func UpdateCategory(c *gin.Context) {
-	idParam := c.Param("id")
-	id, err := strconv.Atoi(idParam)
+func (h *CategoryHandler) UpdateCategory(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID Format"})
 		return
 	}
 
-	cat, err := database.GetCategory(id)
+	cat, err := h.categories.GetByID(id)
 	if err != nil {
-		if errors.Is(err, database.ErrCategoryNotFound) {
+		if errors.Is(err, repositories.ErrCategoryNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Category not Found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalError(c, err)
 		return
 	}
 
 	userID := c.MustGet("user_id").(int)
-	isAdmin := c.MustGet("is_admin").(bool)
+	role := c.MustGet("role").(models.Role)
+	isAdmin := role == models.RoleAdmin
 
 	if cat.UserID == nil {
 		if !isAdmin {
@@ -77,38 +85,38 @@ func UpdateCategory(c *gin.Context) {
 		return
 	}
 
-	if err := database.UpdateCategory(id, input.Name, input.Type); err != nil {
-		if errors.Is(err, database.ErrCategoryNotFound) {
+	if err := h.categories.Update(id, input.Name, input.Type); err != nil {
+		if errors.Is(err, repositories.ErrCategoryNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Category not Found!"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Category updated!"})
 }
 
-func DeleteCategory(c *gin.Context) {
-	idParam := c.Param("id")
-	id, err := strconv.Atoi(idParam)
+func (h *CategoryHandler) DeleteCategory(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID Format"})
 		return
 	}
 
-	cat, err := database.GetCategory(id)
+	cat, err := h.categories.GetByID(id)
 	if err != nil {
-		if errors.Is(err, database.ErrCategoryNotFound) {
+		if errors.Is(err, repositories.ErrCategoryNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Category not Found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalError(c, err)
 		return
 	}
 
 	userID := c.MustGet("user_id").(int)
-	isAdmin := c.MustGet("is_admin").(bool)
+	role := c.MustGet("role").(models.Role)
+	isAdmin := role == models.RoleAdmin
 
 	if cat.UserID == nil {
 		if !isAdmin {
@@ -120,16 +128,16 @@ func DeleteCategory(c *gin.Context) {
 		return
 	}
 
-	if err := database.DeleteCategory(id); err != nil {
-		if errors.Is(err, database.ErrCategoryNotFound) {
+	if err := h.categories.Delete(id); err != nil {
+		if errors.Is(err, repositories.ErrCategoryNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Category not Found"})
 			return
 		}
-		if errors.Is(err, database.ErrCategoryInUse) {
+		if errors.Is(err, repositories.ErrCategoryInUse) {
 			c.JSON(http.StatusConflict, gin.H{"error": "This category is used by existing transactions and cannot be deleted"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalError(c, err)
 		return
 	}
 

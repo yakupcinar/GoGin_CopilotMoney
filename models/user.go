@@ -2,18 +2,24 @@ package models
 
 import "time"
 
+type Role string
+
+const (
+	RoleClient Role = "client"
+	RoleAdmin  Role = "admin"
+)
+
 type User struct {
-	ID           int       `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"-"`
-	IsAdmin      bool      `json:"is_admin"` //Bu yöntemden kaçınıp proje büyümesinde Roller için farklı bir middleware açmaya gidebiliriz token üzerinden onaylamak yerine, fazla rol açılabilir. (client, support, admin)
+	ID           int       `json:"id" gorm:"primaryKey"`
+	Username     string    `json:"username" gorm:"size:20;unique;not null"`
+	PasswordHash string    `json:"-" gorm:"column:password_hash;not null"`
+	Role         Role      `json:"role" gorm:"size:10;not null;default:client"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
 type RegisterInput struct {
 	Username string `json:"username" binding:"required,min=3,max=20,alphanum"`
-	Password string `json:"password" binding:"required,min=8,max=16"` // Şifre için üst sınır yok — RegisterInput.Password sadece min=8, max yok. Küçük ama ilginç bir detay: bcrypt 72 byte'tan uzun şifreleri sessizce kesiyor, yani çok uzun şifrelerin fazlası hash'e katkı sağlamıyor. 
-	// Şifre karmaşıklık kuralı yok (büyük/küçük harf, rakam, sembol zorunluluğu)
+	Password string `json:"password" binding:"required,min=8,max=30"`
 }
 
 type LoginInput struct {

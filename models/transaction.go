@@ -3,13 +3,13 @@ package models
 import "time"
 
 type Transaction struct {
-	ID              int       `json:"id"`
-	AccountID       int       `json:"account_id"`
-	CategoryID      int       `json:"category_id"`
-	Amount          float64   `json:"amount"`
-	Type            string    `json:"type"`
-	Description     string    `json:"description"`
-	TransactionDate time.Time `json:"transaction_date"`
+	ID              int       `json:"id" gorm:"primaryKey"`
+	AccountID       int       `json:"account_id" gorm:"not null"`
+	CategoryID      int       `json:"category_id" gorm:"not null"`
+	Amount          float64   `json:"amount" gorm:"type:numeric(12,2);not null"`
+	Type            string    `json:"type" gorm:"size:10;not null;check:type IN ('income','expense')"`
+	Description     string    `json:"description" gorm:"size:100"`
+	TransactionDate time.Time `json:"transaction_date" gorm:"type:date;not null"`
 	CreatedAt       time.Time `json:"created_at"`
 }
 
@@ -27,5 +27,5 @@ type UpdateTransactionInput struct {
 	Amount          float64   `json:"amount" binding:"required,gt=0"`
 	Type            string    `json:"type" binding:"required,oneof=income expense"`
 	Description     string    `json:"description" binding:"max=100"`
-	TransactionDate time.Time `json:"transaction_date" binding:"required"` // "2026-07-13T00:00:00Z"
+	TransactionDate time.Time `json:"transaction_date" binding:"required"`
 }

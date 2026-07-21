@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"GoGinMoneyCopilot/database"
 	"GoGinMoneyCopilot/models"
+	"GoGinMoneyCopilot/repositories"
 	"errors"
 	"net/http"
 	"strconv"
@@ -10,136 +10,114 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func CreateTransaction(c *gin.Context) {
+type TransactionHandler struct {
+	transactions repositories.TransactionRepository
+	accounts     repositories.AccountRepository
+}
+
+func NewTransactionHandler(transactions repositories.TransactionRepository, accounts repositories.AccountRepository) *TransactionHandler {
+	return &TransactionHandler{transactions: transactions, accounts: accounts}
+}
+
+func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
 	var input models.CreateTransactionInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input format!"})
 		return
 	}
 
-	acc, err := database.GetAccount(input.AccountID)
-	if err != nil {
-		if errors.Is(err, database.ErrAccountNotFound) {
+	if _, err := getAccountForRequest(c, h.accounts, input.AccountID); err != nil {
+		if errors.Is(err, repositories.ErrAccountNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Account not Found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalError(c, err)
 		return
 	}
 
-	userID := c.MustGet("user_id").(int)
-	isAdmin := c.MustGet("is_admin").(bool)
-
-	if acc.UserID != userID && !isAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You don't have right to manage other accounts"})
-		return
-	}
-
-	if err := database.CreateTransaction(input); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := h.transactions.Create(input); err != nil {
+		respondInternalError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"message": "Transaction created!"})
 }
 
-func GetTransaction(c *gin.Context) {
-	idParam := c.Param("id")
-	id, err := strconv.Atoi(idParam)
+func (h *TransactionHandler) GetTransaction(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID Format"})
 		return
 	}
 
-	tx, err := database.GetTransaction(id)
+	tx, err := h.transactions.GetByID(id)
 	if err != nil {
-		if errors.Is(err, database.ErrTransactionNotFound) {
+		if errors.Is(err, repositories.ErrTransactionNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not Found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalError(c, err)
 		return
 	}
 
-	acc, err := database.GetAccount(tx.AccountID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	userID := c.MustGet("user_id").(int)
-	isAdmin := c.MustGet("is_admin").(bool)
-
-	if acc.UserID != userID && !isAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You don't have right to manage other accounts"})
+	if _, err := getAccountForRequest(c, h.accounts, tx.AccountID); err != nil {
+		if errors.Is(err, repositories.ErrAccountNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not Found"})
+			return
+		}
+		respondInternalError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusOK, tx)
 }
 
-func ListAccountTransactions(c *gin.Context) {
-	idParam := c.Param("id")
-	id, err := strconv.Atoi(idParam)
+func (h *TransactionHandler) ListAccountTransactions(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID Format"})
 		return
 	}
 
-	acc, err := database.GetAccount(id)
-	if err != nil {
-		if errors.Is(err, database.ErrAccountNotFound) {
+	if _, err := getAccountForRequest(c, h.accounts, id); err != nil {
+		if errors.Is(err, repositories.ErrAccountNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Account not Found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalError(c, err)
 		return
 	}
 
-	userID := c.MustGet("user_id").(int)
-	isAdmin := c.MustGet("is_admin").(bool)
-
-	if acc.UserID != userID && !isAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You don't have right to manage other accounts"})
-		return
-	}
-
-	transactions, err := database.ListTransactionsByAccount(id)
+	transactions, err := h.transactions.ListByAccount(id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, transactions)
 }
 
-func UpdateTransaction(c *gin.Context) {
-	idParam := c.Param("id")
-	id, err := strconv.Atoi(idParam)
+func (h *TransactionHandler) UpdateTransaction(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID Format"})
 		return
 	}
 
-	tx, err := database.GetTransaction(id)
+	tx, err := h.transactions.GetByID(id)
 	if err != nil {
-		if errors.Is(err, database.ErrTransactionNotFound) {
+		if errors.Is(err, repositories.ErrTransactionNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not Found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalError(c, err)
 		return
 	}
 
-	acc, err := database.GetAccount(tx.AccountID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	userID := c.MustGet("user_id").(int)
-	isAdmin := c.MustGet("is_admin").(bool)
-
-	if acc.UserID != userID && !isAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You are not Admin!"})
+	if _, err := getAccountForRequest(c, h.accounts, tx.AccountID); err != nil {
+		if errors.Is(err, repositories.ErrAccountNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not Found"})
+			return
+		}
+		respondInternalError(c, err)
 		return
 	}
 
@@ -149,56 +127,50 @@ func UpdateTransaction(c *gin.Context) {
 		return
 	}
 
-	if err := database.UpdateTransaction(id, input); err != nil {
-		if errors.Is(err, database.ErrTransactionNotFound) {
+	if err := h.transactions.Update(id, input); err != nil {
+		if errors.Is(err, repositories.ErrTransactionNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not Found!"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Transaction updated!"})
 }
 
-func DeleteTransaction(c *gin.Context) {
-	idParam := c.Param("id")
-	id, err := strconv.Atoi(idParam)
+func (h *TransactionHandler) DeleteTransaction(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID Format"})
 		return
 	}
 
-	tx, err := database.GetTransaction(id)
+	tx, err := h.transactions.GetByID(id)
 	if err != nil {
-		if errors.Is(err, database.ErrTransactionNotFound) {
+		if errors.Is(err, repositories.ErrTransactionNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not Found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalError(c, err)
 		return
 	}
 
-	acc, err := database.GetAccount(tx.AccountID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	userID := c.MustGet("user_id").(int)
-	isAdmin := c.MustGet("is_admin").(bool)
-
-	if acc.UserID != userID && !isAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You are not Admin!"})
-		return
-	}
-
-	if err := database.DeleteTransaction(id); err != nil {
-		if errors.Is(err, database.ErrTransactionNotFound) {
+	if _, err := getAccountForRequest(c, h.accounts, tx.AccountID); err != nil {
+		if errors.Is(err, repositories.ErrAccountNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not Found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalError(c, err)
+		return
+	}
+
+	if err := h.transactions.Delete(id); err != nil {
+		if errors.Is(err, repositories.ErrTransactionNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not Found"})
+			return
+		}
+		respondInternalError(c, err)
 		return
 	}
 

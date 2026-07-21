@@ -4,56 +4,108 @@ import (
 	"GoGinMoneyCopilot/database"
 	"GoGinMoneyCopilot/handlers"
 	"GoGinMoneyCopilot/middleware"
+	"GoGinMoneyCopilot/repositories"
+	"GoGinMoneyCopilot/validators"
+	"context"
 	"log"
-	"regexp"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gin-gonic/gin/binding"
-	"github.com/go-playground/validator/v10"
 	"github.com/joho/godotenv"
 )
-
-func registerCustomValidators() { // To new file this func
-	v, ok := binding.Validator.Engine().(*validator.Validate)
-	if !ok {
-		log.Fatal("Could not register custom validators")
-	}
-
-	accountNameRe := regexp.MustCompile(`^[\p{L}0-9 ]+$`)
-	v.RegisterValidation("accountname", func(fl validator.FieldLevel) bool {
-		return accountNameRe.MatchString(fl.Field().String())
-	})
-}
 
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using system environment variables")
 	}
-	registerCustomValidators()
-	database.InitDB()
+	if os.Getenv("JWT_SECRET") == "" {
+		log.Fatal("JWT_SECRET is not set")
+	}
+	validators.RegisterCustomValidators()
+
+	if err := database.InitDB(); err != nil {
+		log.Fatal(err)
+	}
+
+	accountRepo := repositories.NewAccountRepository(database.DB)
+	userRepo := repositories.NewUserRepository(database.DB)
+	categoryRepo := repositories.NewCategoryRepository(database.DB)
+	transactionRepo := repositories.NewTransactionRepository(database.DB)
+	tokenRepo := repositories.NewTokenRepository(database.DB)
+
+	accountHandler := handlers.NewAccountHandler(accountRepo)
+	categoryHandler := handlers.NewCategoryHandler(categoryRepo)
+	transactionHandler := handlers.NewTransactionHandler(transactionRepo, accountRepo)
+	authHandler := handlers.NewAuthHandler(userRepo, tokenRepo)
+
 	r := gin.New()
 	r.Use(middleware.RequestLogger())
 	r.Use(gin.Recovery())
 
-	r.POST("/register", handlers.Register)
-	r.POST("/login", handlers.Login)
+	r.POST("/register", authHandler.Register)
+	r.POST("/login", authHandler.Login)
 
-	r.POST("/accounts", middleware.AuthMiddleware(), handlers.CreateAccount)
-	r.GET("/accounts/:id", middleware.AuthMiddleware(), handlers.GetAccount)
-	r.PUT("/accounts/:id", middleware.AuthMiddleware(), handlers.UpdateAccount)
-	r.DELETE("/accounts/:id", middleware.AuthMiddleware(), handlers.DeleteAccount)
+	authorized := r.Group("/")
+	authorized.Use(middleware.AuthMiddleware(tokenRepo))
+	{
+		authorized.POST("/logout", authHandler.Logout)
 
-	r.POST("/categories", middleware.AuthMiddleware(), handlers.CreateCategory)
-	r.GET("/categories", middleware.AuthMiddleware(), handlers.ListCategories)
-	r.PUT("/categories/:id", middleware.AuthMiddleware(), handlers.UpdateCategory)
-	r.DELETE("/categories/:id", middleware.AuthMiddleware(), handlers.DeleteCategory)
+		accounts := authorized.Group("/accounts")
+		{
+			accounts.POST("", accountHandler.CreateAccount)
+			accounts.GET("/:id", accountHandler.GetAccount)
+			accounts.PUT("/:id", accountHandler.UpdateAccount)
+			accounts.DELETE("/:id", accountHandler.DeleteAccount)
+			accounts.GET("/:id/transactions", transactionHandler.ListAccountTransactions)
+		}
 
-	r.POST("/transactions", middleware.AuthMiddleware(), handlers.CreateTransaction)
-	r.GET("/transactions/:id", middleware.AuthMiddleware(), handlers.GetTransaction)
-	r.GET("/accounts/:id/transactions", middleware.AuthMiddleware(), handlers.ListAccountTransactions)
-	r.PUT("/transactions/:id", middleware.AuthMiddleware(), handlers.UpdateTransaction)
-	r.DELETE("/transactions/:id", middleware.AuthMiddleware(), handlers.DeleteTransaction)
+		categories := authorized.Group("/categories")
+		{
+			categories.POST("", categoryHandler.CreateCategory)
+			categories.GET("", categoryHandler.ListCategories)
+			categories.PUT("/:id", categoryHandler.UpdateCategory)
+			categories.DELETE("/:id", categoryHandler.DeleteCategory)
+		}
 
-	r.Run(":8080")
+		transactions := authorized.Group("/transactions")
+		{
+			transactions.POST("", transactionHandler.CreateTransaction)
+			transactions.GET("/:id", transactionHandler.GetTransaction)
+			transactions.PUT("/:id", transactionHandler.UpdateTransaction)
+			transactions.DELETE("/:id", transactionHandler.DeleteTransaction)
+		}
+	}
+
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: r,
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server error: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+
+	if sqlDB, err := database.DB.DB(); err == nil {
+		sqlDB.Close()
+	}
+
+	log.Println("Server exited gracefully")
 }
-
