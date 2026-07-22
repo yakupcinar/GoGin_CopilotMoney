@@ -259,7 +259,7 @@ func TestLogout_RepoErrorReturns500(t *testing.T) {
 	tokenRepo.failOn("Revoke", errBoom)
 	r := setupAuthRouter(newFakeUserRepo(), tokenRepo)
 
-	w := performRequest(r, "POST", "/logout", "")
+	w := performRequest(r, "POST", "/auth/logout", "")
 
 	assert500(t, w.Code, w.Body.String())
 	if tokenRepo.revoked["test-jti"] {

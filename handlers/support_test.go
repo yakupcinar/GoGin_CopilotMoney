@@ -13,9 +13,11 @@ package handlers
 // "veritabanı patlarsa handler ne yapıyor?" (500 yolları) test edilebilir.
 
 import (
+	"GoGinMoneyCopilot/ai"
 	"GoGinMoneyCopilot/models"
 	"GoGinMoneyCopilot/repositories"
 	"bytes"
+	"context"
 	"errors"
 	"net/http/httptest"
 	"time"
@@ -24,11 +26,14 @@ import (
 )
 
 var (
-	_ repositories.AccountRepository     = (*fakeAccountRepo)(nil)
-	_ repositories.CategoryRepository    = (*fakeCategoryRepo)(nil)
-	_ repositories.TransactionRepository = (*fakeTransactionRepo)(nil)
-	_ repositories.UserRepository        = (*fakeUserRepo)(nil)
-	_ repositories.TokenRepository       = (*fakeTokenRepo)(nil)
+	_ repositories.AccountRepository       = (*fakeAccountRepo)(nil)
+	_ repositories.CategoryRepository      = (*fakeCategoryRepo)(nil)
+	_ repositories.TransactionRepository   = (*fakeTransactionRepo)(nil)
+	_ repositories.UserRepository          = (*fakeUserRepo)(nil)
+	_ repositories.TokenRepository         = (*fakeTokenRepo)(nil)
+	_ repositories.RefreshTokenRepository  = (*fakeRefreshRepo)(nil)
+	_ repositories.PendingActionRepository = (*fakePendingRepo)(nil)
+	_ ai.ActionParser                      = (*fakeActionParser)(nil)
 )
 
 // errBoom, testlerde "beklenmeyen altyapı hatası"nı temsil eder.
@@ -64,13 +69,17 @@ func (e *errInjector) injected(method string) error {
 type fakeAccountRepo struct {
 	errInjector
 	accounts map[int]*models.Account
-	nextID   int
+	// inUse: silinince ErrAccountInUse dönmesi için işaretli id'ler
+	// (gerçek repo'da bunu foreign key kısıtı yapar)
+	inUse  map[int]bool
+	nextID int
 }
 
 func newFakeAccountRepo() *fakeAccountRepo {
 	return &fakeAccountRepo{
 		errInjector: newErrInjector(),
 		accounts:    map[int]*models.Account{},
+		inUse:       map[int]bool{},
 		nextID:      1,
 	}
 }
@@ -114,6 +123,19 @@ func (r *fakeAccountRepo) GetByIDForUser(accountID, userID int) (*models.Account
 	return acc, nil
 }
 
+func (r *fakeAccountRepo) ListForUser(userID int) ([]models.Account, error) {
+	if err := r.injected("ListForUser"); err != nil {
+		return nil, err
+	}
+	var out []models.Account
+	for _, acc := range r.accounts {
+		if acc.UserID == userID {
+			out = append(out, *acc)
+		}
+	}
+	return out, nil
+}
+
 func (r *fakeAccountRepo) Update(accountID int, name string) error {
 	if err := r.injected("Update"); err != nil {
 		return err
@@ -132,6 +154,9 @@ func (r *fakeAccountRepo) Delete(accountID int) error {
 	}
 	if _, ok := r.accounts[accountID]; !ok {
 		return repositories.ErrAccountNotFound
+	}
+	if r.inUse[accountID] {
+		return repositories.ErrAccountInUse
 	}
 	delete(r.accounts, accountID)
 	return nil
@@ -289,6 +314,19 @@ func (r *fakeTransactionRepo) ListByAccount(accountID int) ([]models.Transaction
 	return out, nil
 }
 
+func (r *fakeTransactionRepo) CountByCategory(categoryID int) (int64, error) {
+	if err := r.injected("CountByCategory"); err != nil {
+		return 0, err
+	}
+	var n int64
+	for _, tx := range r.transactions {
+		if tx.CategoryID == categoryID {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (r *fakeTransactionRepo) Update(transactionID int, input models.UpdateTransactionInput) error {
 	if err := r.injected("Update"); err != nil {
 		return err
@@ -357,6 +395,18 @@ func (r *fakeUserRepo) Create(username, passwordHash string) error {
 	return nil
 }
 
+func (r *fakeUserRepo) GetByID(userID int) (*models.User, error) {
+	if err := r.injected("GetByID"); err != nil {
+		return nil, err
+	}
+	for _, u := range r.users {
+		if u.ID == userID {
+			return u, nil
+		}
+	}
+	return nil, repositories.ErrUserNotFound
+}
+
 func (r *fakeUserRepo) GetByUsername(username string) (*models.User, error) {
 	if err := r.injected("GetByUsername"); err != nil {
 		return nil, err
@@ -390,6 +440,13 @@ func (r *fakeTokenRepo) Revoke(jti string, expiresAt time.Time) error {
 	return nil
 }
 
+func (r *fakeTokenRepo) DeleteExpired(before time.Time) (int64, error) {
+	if err := r.injected("DeleteExpired"); err != nil {
+		return 0, err
+	}
+	return 0, nil
+}
+
 func (r *fakeTokenRepo) IsRevoked(jti string) (bool, error) {
 	if err := r.injected("IsRevoked"); err != nil {
 		return false, err
@@ -418,4 +475,164 @@ func performRequest(r *gin.Engine, method, path, body string) *httptest.Response
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	return w
+}
+
+// ---- fakeRefreshRepo ----
+//
+// Gerçek repo'nun ATOMİK Consume davranışını taklit eder: bir token yalnızca
+// bir kez tüketilebilir, ikinci deneme ErrRefreshTokenReused döner.
+
+type fakeRefreshRepo struct {
+	errInjector
+	tokens map[string]*models.RefreshToken
+	nextID int
+}
+
+func newFakeRefreshRepo() *fakeRefreshRepo {
+	return &fakeRefreshRepo{
+		errInjector: newErrInjector(),
+		tokens:      map[string]*models.RefreshToken{},
+		nextID:      1,
+	}
+}
+
+func (r *fakeRefreshRepo) Create(token *models.RefreshToken) error {
+	if err := r.injected("Create"); err != nil {
+		return err
+	}
+	token.ID = r.nextID
+	r.nextID++
+	copy := *token
+	r.tokens[token.TokenHash] = &copy
+	return nil
+}
+
+func (r *fakeRefreshRepo) Consume(tokenHash string, now time.Time) (*models.RefreshToken, error) {
+	if err := r.injected("Consume"); err != nil {
+		return nil, err
+	}
+	t, ok := r.tokens[tokenHash]
+	if !ok {
+		return nil, repositories.ErrRefreshTokenInvalid
+	}
+	if t.UsedAt != nil {
+		// Sızıntı: kaydı DA döndür ki çağıran tüm oturumları iptal edebilsin.
+		return t, repositories.ErrRefreshTokenReused
+	}
+	if t.RevokedAt != nil || !now.Before(t.ExpiresAt) {
+		return nil, repositories.ErrRefreshTokenInvalid
+	}
+	t.UsedAt = &now
+	return t, nil
+}
+
+func (r *fakeRefreshRepo) Revoke(tokenHash string, now time.Time) error {
+	if err := r.injected("Revoke"); err != nil {
+		return err
+	}
+	if t, ok := r.tokens[tokenHash]; ok && t.RevokedAt == nil {
+		t.RevokedAt = &now
+	}
+	return nil
+}
+
+func (r *fakeRefreshRepo) RevokeAllForUser(userID int, now time.Time) error {
+	if err := r.injected("RevokeAllForUser"); err != nil {
+		return err
+	}
+	for _, t := range r.tokens {
+		if t.UserID == userID && t.RevokedAt == nil {
+			t.RevokedAt = &now
+		}
+	}
+	return nil
+}
+
+func (r *fakeRefreshRepo) DeleteExpired(before time.Time) (int64, error) {
+	if err := r.injected("DeleteExpired"); err != nil {
+		return 0, err
+	}
+	var n int64
+	for h, t := range r.tokens {
+		if t.ExpiresAt.Before(before) {
+			delete(r.tokens, h)
+			n++
+		}
+	}
+	return n, nil
+}
+
+// ---- fakePendingRepo ----
+//
+// Gerçek repo'nun ATOMİK Claim davranışını taklit eder: token tek kullanımlık,
+// süreli ve kullanıcıya bağlı. Dört red sebebi de AYNI hatayı döner —
+// gerçekte olduğu gibi (bilgi sızıntısını önlemek için).
+
+type fakePendingRepo struct {
+	errInjector
+	actions map[string]*models.PendingAction
+}
+
+func newFakePendingRepo() *fakePendingRepo {
+	return &fakePendingRepo{
+		errInjector: newErrInjector(),
+		actions:     map[string]*models.PendingAction{},
+	}
+}
+
+func (r *fakePendingRepo) Create(action *models.PendingAction) error {
+	if err := r.injected("Create"); err != nil {
+		return err
+	}
+	cp := *action
+	r.actions[action.Token] = &cp
+	return nil
+}
+
+func (r *fakePendingRepo) Claim(userID int, token string, now time.Time) (*models.PendingAction, error) {
+	if err := r.injected("Claim"); err != nil {
+		return nil, err
+	}
+	a, ok := r.actions[token]
+	if !ok || a.UserID != userID || a.UsedAt != nil || !now.Before(a.ExpiresAt) {
+		return nil, repositories.ErrPendingActionInvalid
+	}
+	a.UsedAt = &now
+	return a, nil
+}
+
+func (r *fakePendingRepo) DeleteExpired(before time.Time) (int64, error) {
+	if err := r.injected("DeleteExpired"); err != nil {
+		return 0, err
+	}
+	var n int64
+	for tok, a := range r.actions {
+		if a.ExpiresAt.Before(before) {
+			delete(r.actions, tok)
+			n++
+		}
+	}
+	return n, nil
+}
+
+// ---- fakeActionParser ----
+//
+// AI'ı taklit eder. Testler modelin NE döndürdüğünü tam olarak kontrol eder;
+// gerçek API çağrısı yok, para harcanmaz, sonuç deterministiktir.
+//
+// Bu, "modelin uydurduğu çıktıya karşı savunmalarımız çalışıyor mu"
+// sorusunu test edilebilir kılan şey.
+
+type fakeActionParser struct {
+	actions []models.ParsedAction
+	err     error
+	calls   int
+}
+
+func (p *fakeActionParser) Parse(_ context.Context, _ ai.ParseInput) ([]models.ParsedAction, error) {
+	p.calls++
+	if p.err != nil {
+		return nil, p.err
+	}
+	return p.actions, nil
 }

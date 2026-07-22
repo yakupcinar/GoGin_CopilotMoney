@@ -111,6 +111,11 @@ func (h *AccountHandler) DeleteAccount(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Account not Found"})
 			return
 		}
+		if errors.Is(err, repositories.ErrAccountInUse) {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "This account has existing transactions and cannot be deleted"})
+			return
+		}
 		respondInternalError(c, err)
 		return
 	}

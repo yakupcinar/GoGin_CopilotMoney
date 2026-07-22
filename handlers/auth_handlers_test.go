@@ -13,12 +13,19 @@ import (
 )
 
 func setupAuthRouter(userRepo *fakeUserRepo, tokenRepo *fakeTokenRepo) *gin.Engine {
-	h := NewAuthHandler(userRepo, tokenRepo)
+	return setupAuthRouterFull(userRepo, tokenRepo, newFakeRefreshRepo())
+}
+
+// setupAuthRouterFull — refresh repo'ya da erişmek isteyen testler için.
+func setupAuthRouterFull(userRepo *fakeUserRepo, tokenRepo *fakeTokenRepo, refreshRepo *fakeRefreshRepo) *gin.Engine {
+	h := NewAuthHandler(userRepo, tokenRepo, refreshRepo)
 	r := gin.New()
 	r.POST("/register", h.Register)
 	r.POST("/login", h.Login)
-	// logout korumalı bir endpoint: AuthMiddleware'in koyduğu değerleri authAs taklit eder
-	r.POST("/logout", authAs(1, models.RoleClient), h.Logout)
+	// /auth/refresh korumasız: access token'ın süresi dolduğu için buradayız.
+	r.POST("/auth/refresh", h.Refresh)
+	// logout korumalı: AuthMiddleware'in koyduğu değerleri authAs taklit eder
+	r.POST("/auth/logout", authAs(1, models.RoleClient), h.Logout)
 	return r
 }
 
@@ -179,7 +186,7 @@ func TestLogout_RevokesToken(t *testing.T) {
 	tokenRepo := newFakeTokenRepo()
 	r := setupAuthRouter(newFakeUserRepo(), tokenRepo)
 
-	w := performRequest(r, "POST", "/logout", "")
+	w := performRequest(r, "POST", "/auth/logout", "")
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("beklenen 200, gelen %d", w.Code)

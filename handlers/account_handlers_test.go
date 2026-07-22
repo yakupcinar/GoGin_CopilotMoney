@@ -3,6 +3,7 @@ package handlers
 import (
 	"GoGinMoneyCopilot/models"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -170,5 +171,29 @@ func TestGetAccount_InvalidIDFormat(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("beklenen 400, gelen %d", w.Code)
+	}
+}
+
+// İçinde işlem olan hesap silinemez: 409 dönmeli, 500 DEĞİL.
+//
+// Gözlemlenen gerçek hata: repository foreign key ihlalini (23503) jenerik
+// hataya çeviriyordu, client "Internal server error" (500) alıyordu.
+// Veri güvendeydi (DB engelliyor) ama kullanıcı "sunucu bozuk" sanıyordu.
+func TestDeleteAccount_WithTransactionsReturnsConflict(t *testing.T) {
+	repo := newFakeAccountRepo()
+	repo.seed(&models.Account{ID: 1, Name: "Dolu Hesap", UserID: 1})
+	repo.inUse[1] = true
+	r := setupAccountRouter(repo, 1, models.RoleClient)
+
+	w := performRequest(r, "DELETE", "/accounts/1", "")
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("beklenen 409, gelen %d (body: %s)", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "Internal server error") {
+		t.Fatalf("çakışma durumu sunucu hatası gibi gösterildi: %s", w.Body.String())
+	}
+	if len(repo.accounts) != 1 {
+		t.Fatalf("hesap silinmiş görünüyor")
 	}
 }

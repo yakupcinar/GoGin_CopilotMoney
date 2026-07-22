@@ -14,6 +14,7 @@ type TransactionRepository interface {
 	Create(input models.CreateTransactionInput) error
 	GetByID(transactionID int) (*models.Transaction, error)
 	ListByAccount(accountID int) ([]models.Transaction, error)
+	CountByCategory(categoryID int) (int64, error)
 	Update(transactionID int, input models.UpdateTransactionInput) error
 	Delete(transactionID int) error
 }
@@ -58,6 +59,15 @@ func (r *gormTransactionRepository) ListByAccount(accountID int) ([]models.Trans
 		return nil, fmt.Errorf("Transactions couldn't be fetched: %v", err)
 	}
 	return transactions, nil
+}
+
+func (r *gormTransactionRepository) CountByCategory(categoryID int) (int64, error) {
+	var count int64
+	if err := r.db.Model(&models.Transaction{}).
+		Where("category_id = ?", categoryID).Count(&count).Error; err != nil {
+		return 0, fmt.Errorf("Transaction count couldn't be fetched: %v", err)
+	}
+	return count, nil
 }
 
 func (r *gormTransactionRepository) Update(transactionID int, input models.UpdateTransactionInput) error {

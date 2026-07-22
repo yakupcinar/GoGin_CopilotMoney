@@ -5,6 +5,7 @@ import (
 	"GoGinMoneyCopilot/models"
 	"GoGinMoneyCopilot/repositories"
 	"errors"
+	"log"
 	"net/http"
 	"time"
 
@@ -14,13 +15,23 @@ import (
 
 var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("dummy-password-for-timing"), bcrypt.DefaultCost)
 
+// AuthHandler — hibrit token akışı.
+//
+//	access token  : 15 dk, JSON gövdesinde döner, frontend BELLEKTE tutar,
+//	                Authorization header ile taşınır
+//	refresh token : 7 gün, HttpOnly cookie (Path=/auth), JS okuyamaz
 type AuthHandler struct {
-	users  repositories.UserRepository
-	tokens repositories.TokenRepository
+	users   repositories.UserRepository
+	tokens  repositories.TokenRepository        // access token kara listesi (jti)
+	refresh repositories.RefreshTokenRepository // oturum kayıtları
 }
 
-func NewAuthHandler(users repositories.UserRepository, tokens repositories.TokenRepository) *AuthHandler {
-	return &AuthHandler{users: users, tokens: tokens}
+func NewAuthHandler(
+	users repositories.UserRepository,
+	tokens repositories.TokenRepository,
+	refresh repositories.RefreshTokenRepository,
+) *AuthHandler {
+	return &AuthHandler{users: users, tokens: tokens, refresh: refresh}
 }
 
 func (h *AuthHandler) Register(c *gin.Context) {
@@ -48,7 +59,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 func (h *AuthHandler) Login(c *gin.Context) {
 	var input models.LoginInput
-	if err := c.ShouldBind(&input); err != nil {
+	// ShouldBind DEĞİL ShouldBindJSON: ShouldBind form-encoded veriyi de kabul
+	// ederdi. Cookie tabanlı kimliğe geçtiğimiz için "form kabul eden endpoint"
+	// kalıbı artık risk taşıyor — cross-site bir HTML formu JSON gönderemez,
+	// bu da fazladan bir yapısal engel.
+	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input format!"})
 		return
 	}
@@ -73,22 +88,124 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	token, err := auth.GenerateToken(user.ID, user.Role)
+	h.issueTokenPair(c, user)
+}
+
+// Refresh — POST /auth/refresh
+//
+// Access token'ın süresi dolduğunda çağrılır. Gövde BOŞ: kimlik yalnızca
+// HttpOnly cookie'den gelir.
+//
+// Bu endpoint AuthMiddleware'in ARKASINDA OLAMAZ — zaten access token'ın
+// süresi dolduğu için buradayız.
+func (h *AuthHandler) Refresh(c *gin.Context) {
+	raw := auth.RefreshTokenFromRequest(c)
+	if raw == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Session not found, please log in"})
+		return
+	}
+
+	now := time.Now()
+	record, err := h.refresh.Consume(auth.HashRefreshToken(raw), now)
+	if err != nil {
+		h.handleRefreshFailure(c, record, err, now)
+		return
+	}
+
+	// Rolü TAZE oku: refresh token'ın içine gömseydik, yetkisi alınmış bir
+	// kullanıcı token'ı geçerli olduğu sürece eski yetkisini korurdu.
+	user, err := h.users.GetByID(record.UserID)
+	if err != nil {
+		// Kullanıcı silinmiş olabilir — oturumu sonlandır.
+		auth.ClearRefreshCookie(c)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Session is no longer valid"})
+		return
+	}
+
+	h.issueTokenPair(c, user)
+}
+
+// handleRefreshFailure — yenileme başarısız. İki durum var, tepkileri farklı.
+func (h *AuthHandler) handleRefreshFailure(c *gin.Context, record *models.RefreshToken, err error, now time.Time) {
+	if errors.Is(err, repositories.ErrRefreshTokenReused) && record != nil {
+		// SIZINTI SİNYALİ: tüketilmiş bir token tekrar sunuldu.
+		// Ya saldırgan çaldı ya meşru kullanıcı eskisini oynatıyor — ayırt
+		// edemeyiz. Güvenli taraf: o kullanıcının TÜM oturumlarını kapat.
+		if revokeErr := h.refresh.RevokeAllForUser(record.UserID, now); revokeErr != nil {
+			log.Printf("reuse tespit edildi ama iptal başarısız (user=%d): %v",
+				record.UserID, revokeErr)
+		} else {
+			log.Printf("GÜVENLİK: refresh token yeniden kullanıldı, "+
+				"kullanıcının tüm oturumları iptal edildi (user=%d)", record.UserID)
+		}
+	} else if !errors.Is(err, repositories.ErrRefreshTokenInvalid) {
+		// Beklenmeyen altyapı hatası — log'a yaz.
+		log.Println("refresh error:", err)
+	}
+
+	// Client'a HER DURUMDA aynı cevap. Sızıntı mı, süresi mi dolmuş, yok mu —
+	// ayırt edilebilirse saldırgan "bu token gerçekti" bilgisini elde eder.
+	auth.ClearRefreshCookie(c)
+	c.JSON(http.StatusUnauthorized, gin.H{"error": "Session expired, please log in again"})
+}
+
+// Logout — POST /auth/logout
+//
+// Üç iş birden: access token'ı anında iptal et, refresh token'ı iptal et,
+// cookie'yi temizle.
+func (h *AuthHandler) Logout(c *gin.Context) {
+	jti := c.MustGet("jti").(string)
+	exp := c.MustGet("token_exp").(time.Time)
+	now := time.Now()
+
+	// 1) Access token'ı kara listeye al. 15 dk kısa ama "çıkış yaptım" diyen
+	//    kullanıcının token'ı o 15 dk boyunca çalışmaya devam etmemeli.
+	if err := h.tokens.Revoke(jti, exp); err != nil {
+		respondInternalError(c, err)
+		return
+	}
+
+	// 2) Refresh token'ı iptal et. Cookie'yi silmek TEK BAŞINA yetmez:
+	//    değeri kopyalayan biri onu kullanmaya devam edebilirdi.
+	if raw := auth.RefreshTokenFromRequest(c); raw != "" {
+		if err := h.refresh.Revoke(auth.HashRefreshToken(raw), now); err != nil {
+			log.Println("logout: refresh token iptal edilemedi:", err)
+			// Akışı kesmiyoruz — access token zaten iptal edildi.
+		}
+	}
+
+	// 3) Tarayıcıdan cookie'yi kaldır.
+	auth.ClearRefreshCookie(c)
+
+	c.JSON(http.StatusOK, gin.H{"message": "Logged out"})
+}
+
+// issueTokenPair — Login ve Refresh'in ortak son adımı.
+//
+// Access token gövdede döner (frontend bellekte tutar).
+// Refresh token cookie'ye yazılır (frontend hiç görmez).
+func (h *AuthHandler) issueTokenPair(c *gin.Context, user *models.User) {
+	accessToken, err := auth.GenerateToken(user.ID, user.Role)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Token couldn't be created"})
 		return
 	}
 
-	c.JSON(http.StatusOK, models.LoginResponse{Token: token})
-}
+	rawRefresh, hashRefresh, err := auth.NewRefreshToken()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Session couldn't be created"})
+		return
+	}
 
-func (h *AuthHandler) Logout(c *gin.Context) {
-	jti := c.MustGet("jti").(string)
-	exp := c.MustGet("token_exp").(time.Time)
-
-	if err := h.tokens.Revoke(jti, exp); err != nil {
+	if err := h.refresh.Create(&models.RefreshToken{
+		UserID:    user.ID,
+		TokenHash: hashRefresh, // ham değer DB'ye ASLA yazılmaz
+		ExpiresAt: time.Now().Add(auth.RefreshTokenTTL()),
+	}); err != nil {
 		respondInternalError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "Logged out"})
+
+	auth.SetRefreshCookie(c, rawRefresh)
+	c.JSON(http.StatusOK, models.LoginResponse{Token: accessToken})
 }

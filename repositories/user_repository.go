@@ -15,6 +15,7 @@ var ErrUserNotFound = errors.New("User Not Found!")
 type UserRepository interface {
 	Create(username, passwordHash string) error
 	GetByUsername(username string) (*models.User, error)
+	GetByID(userID int) (*models.User, error)
 }
 
 type gormUserRepository struct {
@@ -40,6 +41,22 @@ func (r *gormUserRepository) Create(username, passwordHash string) error {
 func (r *gormUserRepository) GetByUsername(username string) (*models.User, error) {
 	var user models.User
 	if err := r.db.Where("username = ?", username).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("User Can't Be Fetched: %v", err)
+	}
+	return &user, nil
+}
+
+// GetByID — refresh akışında gerekli.
+//
+// Yeni access token üretirken kullanıcının rolünü TAZE olarak okuyoruz.
+// Refresh token'ın içine rolü gömseydik, admin yetkisi alınmış bir kullanıcı
+// refresh token'ı geçerli olduğu sürece admin kalmaya devam ederdi.
+func (r *gormUserRepository) GetByID(userID int) (*models.User, error) {
+	var user models.User
+	if err := r.db.First(&user, userID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrUserNotFound
 		}

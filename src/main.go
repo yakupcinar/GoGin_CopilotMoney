@@ -1,8 +1,12 @@
 package main
 
 import (
+	"GoGinMoneyCopilot/ai"
+	"GoGinMoneyCopilot/auth"
+	"GoGinMoneyCopilot/chat"
 	"GoGinMoneyCopilot/database"
 	"GoGinMoneyCopilot/handlers"
+	"GoGinMoneyCopilot/maintenance"
 	"GoGinMoneyCopilot/middleware"
 	"GoGinMoneyCopilot/repositories"
 	"GoGinMoneyCopilot/validators"
@@ -11,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -25,6 +30,12 @@ func main() {
 	if os.Getenv("JWT_SECRET") == "" {
 		log.Fatal("JWT_SECRET is not set")
 	}
+	// Tehlikeli cookie kombinasyonlarını BAŞLANGIÇTA yakala.
+	// SameSite=None + Secure=false olursa tarayıcı cookie'yi sessizce reddeder;
+	// kullanıcı "giriş yapamıyorum" der, sebebi hiçbir logda görünmez.
+	if err := auth.ValidateCookieConfig(); err != nil {
+		log.Fatal(err)
+	}
 	validators.RegisterCustomValidators()
 
 	if err := database.InitDB(); err != nil {
@@ -36,23 +47,60 @@ func main() {
 	categoryRepo := repositories.NewCategoryRepository(database.DB)
 	transactionRepo := repositories.NewTransactionRepository(database.DB)
 	tokenRepo := repositories.NewTokenRepository(database.DB)
+	pendingRepo := repositories.NewPendingActionRepository(database.DB)
+	refreshRepo := repositories.NewRefreshTokenRepository(database.DB)
+
+	// --- AI / chat zinciri ---
+	// GROQ_API_KEY yoksa chat özelliği KAPALI olur; uygulamanın geri kalanı
+	// normal çalışır. chatService nil kalır, handler 503 döner.
+	var chatService *chat.ActionService
+	if parser, err := ai.NewGroqParser(); err != nil {
+		log.Printf("Chat feature disabled: %v", err)
+	} else {
+		chatService = chat.NewActionService(
+			parser, accountRepo, categoryRepo, transactionRepo, pendingRepo)
+		log.Println("Chat feature enabled")
+	}
 
 	accountHandler := handlers.NewAccountHandler(accountRepo)
 	categoryHandler := handlers.NewCategoryHandler(categoryRepo)
 	transactionHandler := handlers.NewTransactionHandler(transactionRepo, accountRepo)
-	authHandler := handlers.NewAuthHandler(userRepo, tokenRepo)
+	authHandler := handlers.NewAuthHandler(userRepo, tokenRepo, refreshRepo)
+	chatHandler := handlers.NewChatHandler(chatService)
+
+	// --- Rate limiting ---
+	// authLimiter : IP başına — brute-force'u pahalı kılar
+	// chatLimiter : KULLANICI başına — /chat her istekte gerçek para harcıyor
+	authLimiter := middleware.NewRateLimiter(intEnv("AUTH_RATE_PER_MIN", 10), 5)
+	chatLimiter := middleware.NewRateLimiter(intEnv("CHAT_RATE_PER_MIN", 20), 5)
+	sweeperStop := make(chan struct{})
+	go authLimiter.StartSweeper(sweeperStop)
+	go chatLimiter.StartSweeper(sweeperStop)
 
 	r := gin.New()
 	r.Use(middleware.RequestLogger())
 	r.Use(gin.Recovery())
 
-	r.POST("/register", authHandler.Register)
-	r.POST("/login", authHandler.Login)
+	r.POST("/register", authLimiter.Limit(middleware.KeyByIP), authHandler.Register)
+	r.POST("/login", authLimiter.Limit(middleware.KeyByIP), authHandler.Login)
+
+	// /auth/refresh KORUMASIZ olmalı: buraya zaten access token'ın süresi
+	// dolduğu için geliyoruz. Kimlik doğrulaması refresh cookie'sinden gelir.
+	r.POST("/auth/refresh", authLimiter.Limit(middleware.KeyByIP), authHandler.Refresh)
 
 	authorized := r.Group("/")
 	authorized.Use(middleware.AuthMiddleware(tokenRepo))
 	{
-		authorized.POST("/logout", authHandler.Logout)
+		// Logout /auth altında: refresh cookie'nin Path'i /auth olduğu için
+		// cookie ancak buraya gönderilir — token'ı DB'den iptal edebilmek
+		// için değerini görmemiz gerekiyor.
+		authorized.POST("/auth/logout", authHandler.Logout)
+
+		// Chat: serbest metinden eylem üretir. Yıkıcı işlemler token'lı
+		// onay gerektirir; frontend "Emin misiniz?" popup'ında summary'yi
+		// gösterip token'ı /actions/confirm'e gönderir.
+		authorized.POST("/chat", chatLimiter.Limit(middleware.KeyByUser), chatHandler.Chat)
+		authorized.POST("/actions/confirm", chatHandler.Confirm)
 
 		accounts := authorized.Group("/accounts")
 		{
@@ -80,6 +128,13 @@ func main() {
 		}
 	}
 
+	// Periyodik bakım: süresi geçmiş kayıtları temizler.
+	// Üç tablo da (revoked_tokens, pending_actions, refresh_tokens) her
+	// kullanımda satır biriktiriyor ve hiçbiri kendini temizlemiyordu.
+	cleanupCtx, stopCleanup := context.WithCancel(context.Background())
+	cleaner := maintenance.NewCleaner(tokenRepo, pendingRepo, refreshRepo, maintenance.DefaultInterval)
+	go cleaner.Start(cleanupCtx)
+
 	srv := &http.Server{
 		Addr:    ":8080",
 		Handler: r,
@@ -96,6 +151,10 @@ func main() {
 	<-quit
 	log.Println("Shutting down server...")
 
+	// Bakım işçisini ve rate-limit temizleyicilerini durdur.
+	stopCleanup()
+	close(sweeperStop)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -108,4 +167,18 @@ func main() {
 	}
 
 	log.Println("Server exited gracefully")
+}
+
+// intEnv — pozitif tamsayı ortam değişkeni, yoksa/geçersizse varsayılan.
+func intEnv(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		log.Printf("%s geçersiz (%q), varsayılan kullanılıyor: %d", key, v, fallback)
+		return fallback
+	}
+	return n
 }

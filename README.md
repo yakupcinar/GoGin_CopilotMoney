@@ -24,7 +24,7 @@ Todo List!
 **signal.Notify ile SIGINT/SIGTERM'i yakalayıp, http.Server.Shutdown(ctx) ile "mevcut istekleri bitir, yeni istek alma, sonra düzgünce kapan" davranışı eklemek. (CTRL+C ile kapatınca make error alıyor; graceful shutdown'a çevir)
 **SSL ekle + Gin releasede çalıştır + Dockerhub + ... (en son sistemi büyütebildiğin kadar büyüt ve test et)
 ***htp ai entegre kur farklı bir mainde free api key kullan system prompt user prompt denemesi yap, etc..	
-
+***
 
 
 Notes!

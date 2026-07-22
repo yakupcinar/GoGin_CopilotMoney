@@ -39,7 +39,11 @@ func GenerateToken(userID int, role models.Role) (string, error) {
 		"user_id": userID,
 		"role":    string(role),
 		"jti":     jti,
-		"exp":     time.Now().Add(1 * time.Hour).Unix(),
+		// Ömür ACCESS_TOKEN_TTL ile ayarlanır (varsayılan 15 dk).
+		// Kısa tutuluyor: access token bellekte/header'da taşındığı için XSS'e
+		// görece açık; ömrü kısaltarak çalınması hâlindeki pencereyi daraltıyoruz.
+		// Oturum sürekliliğini refresh token sağlıyor.
+		"exp": time.Now().Add(AccessTokenTTL()).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(jwtSecret())
