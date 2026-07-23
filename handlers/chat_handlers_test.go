@@ -513,3 +513,144 @@ func TestChat_BudgetView_NoBudget(t *testing.T) {
 		t.Fatalf("anlaşılır 'bütçe yok' mesajı beklendi, gelen: %q", res.Error)
 	}
 }
+
+// budget_set: chat'ten bütçe kurma (create kademesi — YAZMAZ, taslak üretir).
+//
+// create_transaction ile aynı desen: sonuç res.Payload (bir CreateBudgetInput);
+// frontend onu POST /budgets ile gönderir. Gerçek yazma REST kapısından geçer.
+func TestChat_BudgetSet_ProducesDraft(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{
+		Intent: models.IntentBudgetSet,
+		Params: models.ActionParams{
+			PeriodDays: 30,
+			BudgetCategories: []models.BudgetCategoryParam{
+				{CategoryRef: "Yeme", Amount: 500},
+			},
+		},
+	})
+
+	w := performRequest(f.router, "POST", "/chat", `{"text":"yemeye 500 aylık bütçe"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("beklenen 200, gelen %d (body: %s)", w.Code, w.Body.String())
+	}
+	res := firstResult(t, w)
+	if res.Error != "" {
+		t.Fatalf("beklenmeyen hata: %s", res.Error)
+	}
+	if res.Risk != models.RiskCreate {
+		t.Fatalf("budget_set create kademesi olmalı, gelen: %q", res.Risk)
+	}
+
+	raw, _ := json.Marshal(res.Payload)
+	var input models.CreateBudgetInput
+	if err := json.Unmarshal(raw, &input); err != nil {
+		t.Fatalf("CreateBudgetInput çözülemedi: %v", err)
+	}
+	if input.PeriodDays != 30 {
+		t.Fatalf("period_days 30 beklendi, gelen %d", input.PeriodDays)
+	}
+	if len(input.Categories) != 1 || input.Categories[0].CategoryID != 1 || input.Categories[0].LimitAmount != 500 {
+		t.Fatalf("kategori satırı yanlış çözüldü: %+v", input.Categories)
+	}
+	if input.StartDate != time.Now().Format(models.DateLayout) {
+		t.Fatalf("başlangıç bugün olmalı, gelen %q", input.StartDate)
+	}
+}
+
+// Dönem verilmezse: değer UYDURMA, kullanıcıdan iste.
+func TestChat_BudgetSet_MissingPeriodNeedsInput(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{
+		Intent: models.IntentBudgetSet,
+		Params: models.ActionParams{
+			BudgetCategories: []models.BudgetCategoryParam{{CategoryRef: "Yeme", Amount: 500}},
+		},
+	})
+	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"yemeye 500 bütçe"}`))
+	if res.Payload != nil {
+		t.Fatalf("eksik dönemle taslak üretilmemeli")
+	}
+	found := false
+	for _, n := range res.NeedsInput {
+		if n == "period_days" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("period_days NeedsInput'ta olmalı, gelen: %v", res.NeedsInput)
+	}
+}
+
+// Bilinmeyen kategori: reddet (model id uyduramaz, ref çözülemedi).
+func TestChat_BudgetSet_UnknownCategory(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{
+		Intent: models.IntentBudgetSet,
+		Params: models.ActionParams{
+			PeriodDays:       30,
+			BudgetCategories: []models.BudgetCategoryParam{{CategoryRef: "YokBöyle", Amount: 500}},
+		},
+	})
+	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"x"}`))
+	if res.Error == "" {
+		t.Fatalf("bilinmeyen kategori reddedilmeliydi")
+	}
+	if res.Payload != nil {
+		t.Fatalf("hata varken taslak üretilmemeli")
+	}
+}
+
+// Gelir kategorisi bütçelenemez.
+func TestChat_BudgetSet_IncomeCategoryRejected(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{
+		Intent: models.IntentBudgetSet,
+		Params: models.ActionParams{
+			PeriodDays:       30,
+			BudgetCategories: []models.BudgetCategoryParam{{CategoryRef: "Maas", Amount: 500}},
+		},
+	})
+	uid := chatUserID
+	f.categories.seed(&models.Category{ID: 5, Name: "Maas", Type: "income", UserID: &uid})
+
+	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"x"}`))
+	if res.Error == "" || res.Payload != nil {
+		t.Fatalf("gelir kategorisi reddedilmeliydi (error: %q)", res.Error)
+	}
+}
+
+// Aynı kategori iki kez verilirse reddet.
+func TestChat_BudgetSet_DuplicateCategory(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{
+		Intent: models.IntentBudgetSet,
+		Params: models.ActionParams{
+			PeriodDays: 30,
+			BudgetCategories: []models.BudgetCategoryParam{
+				{CategoryRef: "Yeme", Amount: 500},
+				{CategoryRef: "Yeme", Amount: 200},
+			},
+		},
+	})
+	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"x"}`))
+	if res.Error == "" || res.Payload != nil {
+		t.Fatalf("yinelenen kategori reddedilmeliydi")
+	}
+}
+
+// Zaten bütçesi olan kullanıcı: create çakışırdı, anlaşılır mesaj ver.
+func TestChat_BudgetSet_ExistingBudgetRejected(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{
+		Intent: models.IntentBudgetSet,
+		Params: models.ActionParams{
+			PeriodDays:       30,
+			BudgetCategories: []models.BudgetCategoryParam{{CategoryRef: "Yeme", Amount: 500}},
+		},
+	})
+	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Var",
+		StartDate: models.CivilDate(time.Now()), PeriodDays: 30}, nil)
+
+	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"x"}`))
+	if res.Payload != nil {
+		t.Fatalf("bütçe varken taslak üretilmemeli")
+	}
+	if !strings.Contains(res.Error, "zaten bir bütçeniz var") {
+		t.Fatalf("anlaşılır 'zaten var' mesajı beklendi, gelen: %q", res.Error)
+	}
+}

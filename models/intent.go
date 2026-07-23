@@ -21,6 +21,7 @@ const (
 	IntentCreateAccount     Intent = "create_account"
 	IntentCreateCategory    Intent = "create_category"
 	IntentCreateTransaction Intent = "create_transaction"
+	IntentBudgetSet         Intent = "budget_set"
 
 	// değiştirme
 	IntentUpdateAccount     Intent = "update_account"
@@ -60,6 +61,7 @@ var intentRisks = map[Intent]Risk{
 	IntentCreateAccount:     RiskCreate,
 	IntentCreateCategory:    RiskCreate,
 	IntentCreateTransaction: RiskCreate,
+	IntentBudgetSet:         RiskCreate,
 
 	IntentUpdateAccount:     RiskDestructive,
 	IntentUpdateCategory:    RiskDestructive,
@@ -109,6 +111,18 @@ type ActionParams struct {
 	Description     string  `json:"description"`
 	CategoryID      *int    `json:"category_id"`
 	TransactionDate string  `json:"transaction_date"`
+
+	// bütçe (budget_set)
+	PeriodDays       int                   `json:"period_days"`
+	BudgetCategories []BudgetCategoryParam `json:"budget_categories"`
+}
+
+// BudgetCategoryParam — budget_set niyetinde tek kategori satırı.
+// category_ref kullanıcının dediği isim ("market"); id'yi kod çözer ki model
+// uydurmasın — diğer niyetlerdeki target_ref mantığının aynısı.
+type BudgetCategoryParam struct {
+	CategoryRef string  `json:"category_ref"`
+	Amount      float64 `json:"amount"`
 }
 
 // ParsedAction — modelin ürettiği HAM öneri. Doğrulanmadan asla kullanılmaz.

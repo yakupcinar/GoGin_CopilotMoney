@@ -59,6 +59,7 @@ KULLANILABİLİR EYLEMLER (intent) — bunların DIŞINDA bir şey ASLA üretme:
     create_account     - params: name
     create_category    - params: name, category_type ("income" | "expense")
     create_transaction - params: amount, type, description, category_id, transaction_date
+    budget_set         - bütçe kur (params: period_days + budget_categories listesi)
   Değiştirme:
     update_account     - params: target_ref/target_id + name
     update_category    - params: target_ref/target_id + name ve/veya category_type
@@ -87,6 +88,12 @@ create_transaction için kurallar:
 - transaction_date: YYYY-MM-DD. Göreli ifadeleri verilen bugünün tarihine göre çöz.
   YIL: metinde açıkça yıl yazmıyorsa sonuç MUTLAKA verilen bugünün yılı olmalıdır.
   Kendi bildiğin tarihi ASLA kullanma.
+
+budget_set için kurallar:
+- budget_categories: her gider için {category_ref: kullanıcının dediği isim, amount: pozitif limit}.
+  Kategori id'si VERME; ismi category_ref'e yaz, uygulamada çözülür.
+- period_days: dönemin gün sayısı. "aylık" -> 30, "haftalık" -> 7, "2 hafta" -> 14.
+- name: kullanıcı bütçeye isim verdiyse yaz, yoksa boş bırak.
 
 warnings: SADECE gerçekten sorunlu alanlar için kısa not. Sorun yoksa boş dizi.
   ASLA "X yok", "X net" gibi olumlu not yazma.
@@ -146,9 +153,23 @@ func actionSchema() map[string]any {
 					"category_id": map[string]any{"anyOf": []any{
 						map[string]any{"type": "integer"}, map[string]any{"type": "null"}}},
 					"transaction_date": map[string]any{"type": "string"},
+					"period_days":      map[string]any{"type": "integer"},
+					"budget_categories": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"category_ref": map[string]any{"type": "string"},
+								"amount":       map[string]any{"type": "number"},
+							},
+							"required":             []string{"category_ref", "amount"},
+							"additionalProperties": false,
+						},
+					},
 				},
 				"required": []string{"target_ref", "target_id", "name", "category_type",
-					"amount", "type", "description", "category_id", "transaction_date"},
+					"amount", "type", "description", "category_id", "transaction_date",
+					"period_days", "budget_categories"},
 				"additionalProperties": false,
 			},
 		},

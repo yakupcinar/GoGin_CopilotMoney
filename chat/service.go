@@ -245,6 +245,18 @@ func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
 			res.Payload = *payload
 		}
 
+	case models.IntentBudgetSet:
+		payload, warns, needs, err := s.buildBudget(a, req, categories, today)
+		res.Warnings = append(res.Warnings, warns...)
+		res.NeedsInput = append(res.NeedsInput, needs...)
+		if err != nil {
+			res.Error = err.Error()
+			return res
+		}
+		if payload != nil {
+			res.Payload = *payload
+		}
+
 	// ---------------- yıkıcı: token + açık onay ----------------
 	case models.IntentDeleteCategory, models.IntentUpdateCategory:
 		s.prepareCategoryAction(&res, a, req, categories)
