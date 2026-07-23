@@ -33,6 +33,7 @@ var (
 	_ repositories.TokenRepository         = (*fakeTokenRepo)(nil)
 	_ repositories.RefreshTokenRepository  = (*fakeRefreshRepo)(nil)
 	_ repositories.PendingActionRepository = (*fakePendingRepo)(nil)
+	_ repositories.BudgetRepository        = (*fakeBudgetRepo)(nil)
 	_ ai.ActionParser                      = (*fakeActionParser)(nil)
 )
 
@@ -325,6 +326,34 @@ func (r *fakeTransactionRepo) CountByCategory(categoryID int) (int64, error) {
 		}
 	}
 	return n, nil
+}
+
+// SumExpenseByCategory — gerçek SQL'in mantığını BİREBİR yansıtır: sadece
+// expense, sadece verilen hesaplar, yarı açık [from, to) aralığı. Aksi halde
+// sınır testleri sorguyu değil sahteyi test etmiş olur.
+func (r *fakeTransactionRepo) SumExpenseByCategory(accountIDs []int, from, to time.Time) (map[int]float64, error) {
+	if err := r.injected("SumExpenseByCategory"); err != nil {
+		return nil, err
+	}
+	sums := map[int]float64{}
+	if len(accountIDs) == 0 {
+		return sums, nil
+	}
+	allowed := map[int]bool{}
+	for _, id := range accountIDs {
+		allowed[id] = true
+	}
+	for _, tx := range r.transactions {
+		if !allowed[tx.AccountID] || tx.Type != "expense" {
+			continue
+		}
+		d := models.CivilDate(tx.TransactionDate)
+		if d.Before(models.CivilDate(from)) || !d.Before(models.CivilDate(to)) {
+			continue
+		}
+		sums[tx.CategoryID] += tx.Amount
+	}
+	return sums, nil
 }
 
 func (r *fakeTransactionRepo) Update(transactionID int, input models.UpdateTransactionInput) error {
@@ -635,4 +664,129 @@ func (p *fakeActionParser) Parse(_ context.Context, _ ai.ParseInput) ([]models.P
 		return nil, p.err
 	}
 	return p.actions, nil
+}
+
+// ---- fakeBudgetRepo ----
+//
+// Gerçek repo'nun davranışını yansıtır: kullanıcı başına tek bütçe, başlık ve
+// satırlar birlikte yaşar, Replace tam değiştirmedir.
+
+type fakeBudgetRepo struct {
+	errInjector
+	budgets map[int]*models.Budget
+	lines   map[int][]models.BudgetCategory
+	nextID  int
+}
+
+func newFakeBudgetRepo() *fakeBudgetRepo {
+	return &fakeBudgetRepo{
+		errInjector: newErrInjector(),
+		budgets:     map[int]*models.Budget{},
+		lines:       map[int][]models.BudgetCategory{},
+		nextID:      1,
+	}
+}
+
+func (r *fakeBudgetRepo) seed(b *models.Budget, lines []models.BudgetCategory) {
+	r.budgets[b.ID] = b
+	r.lines[b.ID] = lines
+	if b.ID >= r.nextID {
+		r.nextID = b.ID + 1
+	}
+}
+
+func (r *fakeBudgetRepo) Create(userID int, input models.CreateBudgetInput, startDate time.Time) error {
+	if err := r.injected("Create"); err != nil {
+		return err
+	}
+	for _, b := range r.budgets {
+		if b.UserID == userID {
+			return repositories.ErrBudgetExists
+		}
+	}
+	id := r.nextID
+	r.budgets[id] = &models.Budget{
+		ID:         id,
+		UserID:     userID,
+		Name:       input.Name,
+		StartDate:  models.CivilDate(startDate),
+		PeriodDays: input.PeriodDays,
+	}
+	r.lines[id] = fakeLinesFor(id, input.Categories)
+	r.nextID++
+	return nil
+}
+
+func fakeLinesFor(budgetID int, inputs []models.BudgetCategoryInput) []models.BudgetCategory {
+	out := make([]models.BudgetCategory, 0, len(inputs))
+	for i, in := range inputs {
+		out = append(out, models.BudgetCategory{
+			ID:          i + 1,
+			BudgetID:    budgetID,
+			CategoryID:  in.CategoryID,
+			LimitAmount: in.LimitAmount,
+		})
+	}
+	return out
+}
+
+func (r *fakeBudgetRepo) GetForUser(userID int) (*models.Budget, error) {
+	if err := r.injected("GetForUser"); err != nil {
+		return nil, err
+	}
+	for _, b := range r.budgets {
+		if b.UserID == userID {
+			return b, nil
+		}
+	}
+	return nil, repositories.ErrBudgetNotFound
+}
+
+func (r *fakeBudgetRepo) ListCategories(budgetID int) ([]models.BudgetCategory, error) {
+	if err := r.injected("ListCategories"); err != nil {
+		return nil, err
+	}
+	return r.lines[budgetID], nil
+}
+
+func (r *fakeBudgetRepo) Replace(budgetID int, input models.UpdateBudgetInput, startDate time.Time) error {
+	if err := r.injected("Replace"); err != nil {
+		return err
+	}
+	b, ok := r.budgets[budgetID]
+	if !ok {
+		return repositories.ErrBudgetNotFound
+	}
+	b.Name = input.Name
+	b.StartDate = models.CivilDate(startDate)
+	b.PeriodDays = input.PeriodDays
+	r.lines[budgetID] = fakeLinesFor(budgetID, input.Categories)
+	return nil
+}
+
+func (r *fakeBudgetRepo) Delete(budgetID int) error {
+	if err := r.injected("Delete"); err != nil {
+		return err
+	}
+	if _, ok := r.budgets[budgetID]; !ok {
+		return repositories.ErrBudgetNotFound
+	}
+	delete(r.budgets, budgetID)
+	delete(r.lines, budgetID)
+	return nil
+}
+
+func (r *fakeBudgetRepo) CountByCategory(categoryID int) (int64, error) {
+	if err := r.injected("CountByCategory"); err != nil {
+		return 0, err
+	}
+	var n int64
+	for _, lines := range r.lines {
+		for _, line := range lines {
+			if line.CategoryID == categoryID {
+				n++
+			}
+		}
+	}
+	return n, nil
 }

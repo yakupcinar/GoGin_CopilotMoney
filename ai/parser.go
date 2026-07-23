@@ -54,6 +54,7 @@ KULLANILABİLİR EYLEMLER (intent) — bunların DIŞINDA bir şey ASLA üretme:
     get_account        - hesap bilgisi (params: target_ref veya target_id)
     list_transactions  - bir hesabın işlemleri (params: target_ref veya target_id)
     get_transaction    - tek işlem (params: target_id ZORUNLU)
+    budget_view        - kullanıcının bütçesini ve bu dönemki harcamasını göster
   Oluşturma:
     create_account     - params: name
     create_category    - params: name, category_type ("income" | "expense")

@@ -23,6 +23,7 @@ type ActionService struct {
 	accounts   repositories.AccountRepository
 	categories repositories.CategoryRepository
 	txs        repositories.TransactionRepository
+	budgets    repositories.BudgetRepository
 	pending    repositories.PendingActionRepository
 }
 
@@ -31,11 +32,12 @@ func NewActionService(
 	accounts repositories.AccountRepository,
 	categories repositories.CategoryRepository,
 	txs repositories.TransactionRepository,
+	budgets repositories.BudgetRepository,
 	pending repositories.PendingActionRepository,
 ) *ActionService {
 	return &ActionService{
 		parser: parser, accounts: accounts, categories: categories,
-		txs: txs, pending: pending,
+		txs: txs, budgets: budgets, pending: pending,
 	}
 }
 
@@ -186,6 +188,23 @@ func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
 			return res
 		}
 		res.Data = tx
+
+	case models.IntentBudgetView:
+		// Görünüm mantığı HTTP handler'ıyla ORTAK (chat.BuildBudgetView).
+		// Chat şimdilik yalnızca içinde bulunulan dönemi gösterir (offset 0);
+		// "geçen ayki bütçem" gibi göreli dönem ileride eklenebilir.
+		now := time.Now().In(models.AppLocation())
+		view, err := BuildBudgetView(s.budgets, s.categories, s.accounts, s.txs, req.UserID, 0, now)
+		if err != nil {
+			if errors.Is(err, repositories.ErrBudgetNotFound) {
+				res.Error = "henüz bir bütçeniz yok"
+				return res
+			}
+			// Altyapı hatası: detayı sızdırma, jenerik mesaj.
+			res.Error = "bütçe alınamadı"
+			return res
+		}
+		res.Data = view
 
 	// ---------------- oluşturma: taslak üret ----------------
 	case models.IntentCreateAccount:

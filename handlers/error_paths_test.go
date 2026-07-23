@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // assert500 hem status kodunu hem de hata detayının sızmadığını doğrular.
@@ -276,5 +277,138 @@ func TestLogin_UnknownUserStill401(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("beklenen 401, gelen %d (body: %s)", w.Code, w.Body.String())
+	}
+}
+
+// ---- budget 500 yolları ----
+
+// createBudgetBody — geçerli tek kategorili gövde.
+const validBudgetBody = `{"name":"Aylık","start_date":"2026-01-05","period_days":30,"categories":[{"category_id":3,"limit_amount":6000}]}`
+
+func seedBudgetCategory(catRepo *fakeCategoryRepo) {
+	catRepo.seed(&models.Category{ID: 3, Name: "Market", Type: "expense", UserID: intPtr(1)})
+}
+
+func TestCreateBudget_RepoErrorReturns500(t *testing.T) {
+	bRepo := newFakeBudgetRepo()
+	bRepo.failOn("Create", errBoom)
+	catRepo := newFakeCategoryRepo()
+	seedBudgetCategory(catRepo)
+	r := setupBudgetRouter(bRepo, catRepo, newFakeAccountRepo(), newFakeTransactionRepo(), 1, models.RoleClient)
+
+	w := performRequest(r, "POST", "/budgets", validBudgetBody)
+	assert500(t, w.Code, w.Body.String())
+	if len(bRepo.budgets) != 0 {
+		t.Fatalf("hata olmasına rağmen bütçe oluştu")
+	}
+}
+
+func TestCreateBudget_CategoryRepoErrorReturns500(t *testing.T) {
+	bRepo := newFakeBudgetRepo()
+	catRepo := newFakeCategoryRepo()
+	seedBudgetCategory(catRepo)
+	catRepo.failOn("GetForUser", errBoom)
+	r := setupBudgetRouter(bRepo, catRepo, newFakeAccountRepo(), newFakeTransactionRepo(), 1, models.RoleClient)
+
+	w := performRequest(r, "POST", "/budgets", validBudgetBody)
+	assert500(t, w.Code, w.Body.String())
+	if len(bRepo.budgets) != 0 {
+		t.Fatalf("kategori doğrulanamadan bütçe oluştu")
+	}
+}
+
+// seededBudget — GET yolları için hazır bir bütçe + hesap kurar.
+func seededBudgetRouter(t *testing.T, bRepo *fakeBudgetRepo, catRepo *fakeCategoryRepo, accRepo *fakeAccountRepo, txRepo *fakeTransactionRepo) {
+	t.Helper()
+	seedBudgetCategory(catRepo)
+	accRepo.seed(&models.Account{ID: 1, Name: "Nakit", UserID: 1})
+	bRepo.seed(&models.Budget{ID: 1, UserID: 1, Name: "Aylık", StartDate: models.CivilDate(time.Now().AddDate(0, 0, -5)), PeriodDays: 30},
+		[]models.BudgetCategory{{ID: 1, BudgetID: 1, CategoryID: 3, LimitAmount: 6000}})
+}
+
+func TestGetBudget_RepoErrorReturns500(t *testing.T) {
+	bRepo := newFakeBudgetRepo()
+	bRepo.failOn("GetForUser", errBoom)
+	r := setupBudgetRouter(bRepo, newFakeCategoryRepo(), newFakeAccountRepo(), newFakeTransactionRepo(), 1, models.RoleClient)
+
+	w := performRequest(r, "GET", "/budgets", "")
+	assert500(t, w.Code, w.Body.String())
+}
+
+func TestGetBudget_ListCategoriesErrorReturns500(t *testing.T) {
+	bRepo := newFakeBudgetRepo()
+	catRepo := newFakeCategoryRepo()
+	accRepo := newFakeAccountRepo()
+	txRepo := newFakeTransactionRepo()
+	seededBudgetRouter(t, bRepo, catRepo, accRepo, txRepo)
+	bRepo.failOn("ListCategories", errBoom)
+	r := setupBudgetRouter(bRepo, catRepo, accRepo, txRepo, 1, models.RoleClient)
+
+	w := performRequest(r, "GET", "/budgets", "")
+	assert500(t, w.Code, w.Body.String())
+}
+
+func TestGetBudget_AccountRepoErrorReturns500(t *testing.T) {
+	bRepo := newFakeBudgetRepo()
+	catRepo := newFakeCategoryRepo()
+	accRepo := newFakeAccountRepo()
+	txRepo := newFakeTransactionRepo()
+	seededBudgetRouter(t, bRepo, catRepo, accRepo, txRepo)
+	accRepo.failOn("ListForUser", errBoom)
+	r := setupBudgetRouter(bRepo, catRepo, accRepo, txRepo, 1, models.RoleClient)
+
+	w := performRequest(r, "GET", "/budgets", "")
+	assert500(t, w.Code, w.Body.String())
+}
+
+func TestGetBudget_SumErrorReturns500(t *testing.T) {
+	bRepo := newFakeBudgetRepo()
+	catRepo := newFakeCategoryRepo()
+	accRepo := newFakeAccountRepo()
+	txRepo := newFakeTransactionRepo()
+	seededBudgetRouter(t, bRepo, catRepo, accRepo, txRepo)
+	txRepo.failOn("SumExpenseByCategory", errBoom)
+	r := setupBudgetRouter(bRepo, catRepo, accRepo, txRepo, 1, models.RoleClient)
+
+	w := performRequest(r, "GET", "/budgets", "")
+	assert500(t, w.Code, w.Body.String())
+}
+
+func TestUpdateBudget_RepoErrorReturns500(t *testing.T) {
+	bRepo := newFakeBudgetRepo()
+	catRepo := newFakeCategoryRepo()
+	seedBudgetCategory(catRepo)
+	bRepo.seed(&models.Budget{ID: 1, UserID: 1, Name: "Var", StartDate: models.CivilDate(time.Now()), PeriodDays: 30}, nil)
+	bRepo.failOn("Replace", errBoom)
+	r := setupBudgetRouter(bRepo, catRepo, newFakeAccountRepo(), newFakeTransactionRepo(), 1, models.RoleClient)
+
+	w := performRequest(r, "PUT", "/budgets", validBudgetBody)
+	assert500(t, w.Code, w.Body.String())
+}
+
+func TestDeleteBudget_RepoErrorReturns500(t *testing.T) {
+	bRepo := newFakeBudgetRepo()
+	bRepo.seed(&models.Budget{ID: 1, UserID: 1, Name: "Var", StartDate: models.CivilDate(time.Now()), PeriodDays: 30}, nil)
+	bRepo.failOn("Delete", errBoom)
+	r := setupBudgetRouter(bRepo, newFakeCategoryRepo(), newFakeAccountRepo(), newFakeTransactionRepo(), 1, models.RoleClient)
+
+	w := performRequest(r, "DELETE", "/budgets", "")
+	assert500(t, w.Code, w.Body.String())
+	if len(bRepo.budgets) != 1 {
+		t.Fatalf("hata olmasına rağmen bütçe silindi")
+	}
+}
+
+func TestDeleteCategory_BudgetCountErrorReturns500(t *testing.T) {
+	repo := newFakeCategoryRepo()
+	repo.seed(&models.Category{ID: 3, Name: "Market", Type: "expense", UserID: intPtr(1)})
+	bRepo := newFakeBudgetRepo()
+	bRepo.failOn("CountByCategory", errBoom)
+	r := setupCategoryRouterWithBudgets(repo, bRepo, 1, models.RoleClient)
+
+	w := performRequest(r, "DELETE", "/categories/3", "")
+	assert500(t, w.Code, w.Body.String())
+	if _, ok := repo.categories[3]; !ok {
+		t.Fatalf("bütçe sayımı başarısızken kategori silindi")
 	}
 }

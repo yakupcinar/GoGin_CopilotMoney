@@ -5,12 +5,17 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 func setupCategoryRouter(repo *fakeCategoryRepo, userID int, role models.Role) *gin.Engine {
-	h := NewCategoryHandler(repo)
+	return setupCategoryRouterWithBudgets(repo, newFakeBudgetRepo(), userID, role)
+}
+
+func setupCategoryRouterWithBudgets(repo *fakeCategoryRepo, bRepo *fakeBudgetRepo, userID int, role models.Role) *gin.Engine {
+	h := NewCategoryHandler(repo, bRepo)
 	r := gin.New()
 	r.Use(authAs(userID, role))
 	r.POST("/categories", h.CreateCategory)
@@ -170,5 +175,41 @@ func TestDeleteCategory_NotFound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("beklenen 404, gelen %d", w.Code)
+	}
+}
+
+// GÜVENLİK/BÜTÇE: bir bütçe tarafından kullanılan kategori silinemez.
+func TestDeleteCategory_UsedByBudgetReturnsConflict(t *testing.T) {
+	repo := newFakeCategoryRepo()
+	repo.seed(&models.Category{ID: 3, Name: "Market", Type: "expense", UserID: intPtr(1)})
+	bRepo := newFakeBudgetRepo()
+	bRepo.seed(&models.Budget{ID: 1, UserID: 1, Name: "Aylık", StartDate: models.CivilDate(time.Now()), PeriodDays: 30},
+		[]models.BudgetCategory{{ID: 1, BudgetID: 1, CategoryID: 3, LimitAmount: 6000}})
+
+	r := setupCategoryRouterWithBudgets(repo, bRepo, 1, models.RoleClient)
+	w := performRequest(r, "DELETE", "/categories/3", "")
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("beklenen 409, gelen %d (body: %s)", w.Code, w.Body.String())
+	}
+	if _, ok := repo.categories[3]; !ok {
+		t.Fatalf("bütçede kullanılan kategori silindi")
+	}
+}
+
+// Regresyon: bütçe bağımlılığı eklendikten sonra normal silme hâlâ çalışmalı.
+func TestDeleteCategory_NotUsedByBudgetSucceeds(t *testing.T) {
+	repo := newFakeCategoryRepo()
+	repo.seed(&models.Category{ID: 3, Name: "Market", Type: "expense", UserID: intPtr(1)})
+	bRepo := newFakeBudgetRepo()
+
+	r := setupCategoryRouterWithBudgets(repo, bRepo, 1, models.RoleClient)
+	w := performRequest(r, "DELETE", "/categories/3", "")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("beklenen 200, gelen %d (body: %s)", w.Code, w.Body.String())
+	}
+	if _, ok := repo.categories[3]; ok {
+		t.Fatalf("kategori silinmedi")
 	}
 }

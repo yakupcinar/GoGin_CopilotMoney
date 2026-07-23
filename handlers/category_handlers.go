@@ -12,10 +12,11 @@ import (
 
 type CategoryHandler struct {
 	categories repositories.CategoryRepository
+	budgets    repositories.BudgetRepository
 }
 
-func NewCategoryHandler(categories repositories.CategoryRepository) *CategoryHandler {
-	return &CategoryHandler{categories: categories}
+func NewCategoryHandler(categories repositories.CategoryRepository, budgets repositories.BudgetRepository) *CategoryHandler {
+	return &CategoryHandler{categories: categories, budgets: budgets}
 }
 
 func (h *CategoryHandler) CreateCategory(c *gin.Context) {
@@ -125,6 +126,20 @@ func (h *CategoryHandler) DeleteCategory(c *gin.Context) {
 		}
 	} else if *cat.UserID != userID && !isAdmin {
 		c.JSON(http.StatusForbidden, gin.H{"error": "You don't have right to manage other users' categories"})
+		return
+	}
+
+	// Bütçe referansı kontrolü GO'DA yapılıyor, veritabanında değil.
+	// SEBEP: AutoMigrate budget_categories.category_id için FK ÜRETMEZ (hiçbir
+	// modelde foreignKey etiketi yok). FK yoksa silme başarılı olur ve bütçede
+	// öksüz bir satır kalır — kullanıcının toplam limiti sessizce yanlış görünür.
+	used, err := h.budgets.CountByCategory(id)
+	if err != nil {
+		respondInternalError(c, err)
+		return
+	}
+	if used > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "This category is used by a budget and cannot be deleted"})
 		return
 	}
 

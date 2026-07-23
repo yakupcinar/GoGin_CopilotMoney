@@ -27,8 +27,11 @@ func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using system environment variables")
 	}
-	if os.Getenv("JWT_SECRET") == "" {
-		log.Fatal("JWT_SECRET is not set")
+	// JWT_SECRET yalnızca "var mı" değil "yeterince güçlü mü" diye de kontrol
+	// edilir. 32 karakterin altı (HMAC-SHA256 için ~256 bit) bir anahtar ya da
+	// geliştirmeden kalma zayıf bir placeholder üretime taşınırsa uygulama açılmaz.
+	if len(os.Getenv("JWT_SECRET")) < 32 {
+		log.Fatal("JWT_SECRET must be set and at least 32 characters (üret: openssl rand -base64 48)")
 	}
 	// Tehlikeli cookie kombinasyonlarını BAŞLANGIÇTA yakala.
 	// SameSite=None + Secure=false olursa tarayıcı cookie'yi sessizce reddeder;
@@ -46,6 +49,7 @@ func main() {
 	userRepo := repositories.NewUserRepository(database.DB)
 	categoryRepo := repositories.NewCategoryRepository(database.DB)
 	transactionRepo := repositories.NewTransactionRepository(database.DB)
+	budgetRepo := repositories.NewBudgetRepository(database.DB)
 	tokenRepo := repositories.NewTokenRepository(database.DB)
 	pendingRepo := repositories.NewPendingActionRepository(database.DB)
 	refreshRepo := repositories.NewRefreshTokenRepository(database.DB)
@@ -58,13 +62,14 @@ func main() {
 		log.Printf("Chat feature disabled: %v", err)
 	} else {
 		chatService = chat.NewActionService(
-			parser, accountRepo, categoryRepo, transactionRepo, pendingRepo)
+			parser, accountRepo, categoryRepo, transactionRepo, budgetRepo, pendingRepo)
 		log.Println("Chat feature enabled")
 	}
 
 	accountHandler := handlers.NewAccountHandler(accountRepo)
-	categoryHandler := handlers.NewCategoryHandler(categoryRepo)
+	categoryHandler := handlers.NewCategoryHandler(categoryRepo, budgetRepo)
 	transactionHandler := handlers.NewTransactionHandler(transactionRepo, accountRepo)
+	budgetHandler := handlers.NewBudgetHandler(budgetRepo, categoryRepo, accountRepo, transactionRepo)
 	authHandler := handlers.NewAuthHandler(userRepo, tokenRepo, refreshRepo)
 	chatHandler := handlers.NewChatHandler(chatService)
 
@@ -125,6 +130,14 @@ func main() {
 			transactions.GET("/:id", transactionHandler.GetTransaction)
 			transactions.PUT("/:id", transactionHandler.UpdateTransaction)
 			transactions.DELETE("/:id", transactionHandler.DeleteTransaction)
+		}
+
+		budgets := authorized.Group("/budgets")
+		{
+			budgets.POST("", budgetHandler.CreateBudget)
+			budgets.GET("", budgetHandler.GetBudget)
+			budgets.PUT("", budgetHandler.UpdateBudget)
+			budgets.DELETE("", budgetHandler.DeleteBudget)
 		}
 	}
 

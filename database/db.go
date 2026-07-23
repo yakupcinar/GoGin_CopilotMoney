@@ -37,6 +37,8 @@ func InitDB() error {
 		&models.Account{},
 		&models.Category{},
 		&models.Transaction{},
+		&models.Budget{},
+		&models.BudgetCategory{},
 		&models.RevokedToken{},
 		&models.PendingAction{},
 		&models.RefreshToken{},

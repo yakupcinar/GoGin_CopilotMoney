@@ -15,6 +15,7 @@ const (
 	IntentGetAccount       Intent = "get_account"
 	IntentGetTransaction   Intent = "get_transaction"
 	IntentListTransactions Intent = "list_transactions"
+	IntentBudgetView       Intent = "budget_view"
 
 	// oluşturma
 	IntentCreateAccount     Intent = "create_account"
@@ -54,6 +55,7 @@ var intentRisks = map[Intent]Risk{
 	IntentGetAccount:       RiskRead,
 	IntentGetTransaction:   RiskRead,
 	IntentListTransactions: RiskRead,
+	IntentBudgetView:       RiskRead,
 
 	IntentCreateAccount:     RiskCreate,
 	IntentCreateCategory:    RiskCreate,

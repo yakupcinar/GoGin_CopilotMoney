@@ -30,6 +30,7 @@ type chatFixture struct {
 	accounts   *fakeAccountRepo
 	categories *fakeCategoryRepo
 	txs        *fakeTransactionRepo
+	budgets    *fakeBudgetRepo
 	pending    *fakePendingRepo
 }
 
@@ -60,8 +61,9 @@ func newChatFixture(t *testing.T, actions ...models.ParsedAction) *chatFixture {
 		Type: "expense", Description: "kahve", TransactionDate: time.Now(),
 	})
 
+	budgets := newFakeBudgetRepo()
 	pending := newFakePendingRepo()
-	svc := chat.NewActionService(parser, accounts, categories, txs, pending)
+	svc := chat.NewActionService(parser, accounts, categories, txs, budgets, pending)
 	h := NewChatHandler(svc)
 
 	r := gin.New()
@@ -69,7 +71,7 @@ func newChatFixture(t *testing.T, actions ...models.ParsedAction) *chatFixture {
 	r.POST("/chat", h.Chat)
 	r.POST("/actions/confirm", h.Confirm)
 
-	return &chatFixture{r, parser, accounts, categories, txs, pending}
+	return &chatFixture{r, parser, accounts, categories, txs, budgets, pending}
 }
 
 // firstResult — cevaptaki ilk eylemi çözer.
@@ -414,7 +416,7 @@ func TestConfirm_ForeignToken_RejectedIndistinguishably(t *testing.T) {
 	token := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"sil"}`)).Token
 
 	// Aynı servis, FARKLI kullanıcı.
-	svc := chat.NewActionService(f.parser, f.accounts, f.categories, f.txs, f.pending)
+	svc := chat.NewActionService(f.parser, f.accounts, f.categories, f.txs, f.budgets, f.pending)
 	other := gin.New()
 	other.Use(authAs(otherUserID, models.RoleClient))
 	other.POST("/actions/confirm", NewChatHandler(svc).Confirm)
@@ -453,5 +455,61 @@ func TestConfirm_TargetBecameInUse_Blocked(t *testing.T) {
 	}
 	if _, err := f.categories.GetByID(2); err != nil {
 		t.Fatal("kategori silindi — TOCTOU koruması çalışmadı")
+	}
+}
+
+// budget_view: chat üzerinden bütçe görüntüleme (okuma niyeti, onaysız).
+//
+// GÜVEN SINIRI: sahte parser IntentBudgetView döndürür (model bunu üretmiş
+// gibi); gerçek olan chat.ActionService'in bu niyeti BuildBudgetView'e
+// yönlendirmesi ve HTTP handler'ıyla AYNI sonucu üretmesidir.
+func TestChat_BudgetView_ReturnsCurrentPeriod(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{Intent: models.IntentBudgetView})
+	// Kategori 1 (Yeme) için 500 limitli, bugünü içeren bir bütçe.
+	f.budgets.seed(
+		&models.Budget{ID: 1, UserID: chatUserID, Name: "Aylık",
+			StartDate: models.CivilDate(time.Now().AddDate(0, 0, -5)), PeriodDays: 30},
+		[]models.BudgetCategory{{ID: 1, BudgetID: 1, CategoryID: 1, LimitAmount: 500}},
+	)
+
+	w := performRequest(f.router, "POST", "/chat", `{"text":"bütçemi göster"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("beklenen 200, gelen %d (body: %s)", w.Code, w.Body.String())
+	}
+	res := firstResult(t, w)
+	if res.Error != "" {
+		t.Fatalf("beklenmeyen hata: %s", res.Error)
+	}
+	if res.Risk != models.RiskRead {
+		t.Fatalf("budget_view okuma niyeti olmalı, gelen risk: %q", res.Risk)
+	}
+
+	// res.Data JSON'a serialize edilmiş bir BudgetView; geri çözüp doğrula.
+	raw, _ := json.Marshal(res.Data)
+	var view models.BudgetView
+	if err := json.Unmarshal(raw, &view); err != nil {
+		t.Fatalf("BudgetView çözülemedi: %v", err)
+	}
+	// Fixture'daki 50 TL'lik "kahve" işlemi (kategori 1) bu dönemde sayılmalı.
+	if view.TotalSpent != 50 {
+		t.Fatalf("harcama 50 beklendi, gelen %v", view.TotalSpent)
+	}
+	if view.TotalLimit != 500 {
+		t.Fatalf("limit 500 beklendi, gelen %v", view.TotalLimit)
+	}
+}
+
+// Bütçesi olmayan kullanıcı chat'ten bütçe isterse: 200 + anlaşılır hata,
+// 500 DEĞİL (kullanıcı hatası, sunucu arızası değil).
+func TestChat_BudgetView_NoBudget(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{Intent: models.IntentBudgetView})
+
+	w := performRequest(f.router, "POST", "/chat", `{"text":"bütçemi göster"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("beklenen 200, gelen %d", w.Code)
+	}
+	res := firstResult(t, w)
+	if res.Error != "henüz bir bütçeniz yok" {
+		t.Fatalf("anlaşılır 'bütçe yok' mesajı beklendi, gelen: %q", res.Error)
 	}
 }
