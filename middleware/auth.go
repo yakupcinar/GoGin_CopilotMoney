@@ -27,7 +27,7 @@ func AuthMiddleware(tokens repositories.TokenRepository) gin.HandlerFunc {
 
 		claims, err := auth.ValidateToken(parts[1])
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Token geçersiz"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			c.Abort()
 			return
 		}

@@ -49,7 +49,7 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil || d <= 0 {
-		log.Printf("%s geçersiz (%q), varsayılan kullanılıyor: %v", key, v, fallback)
+		log.Printf("%s is invalid (%q), using default: %v", key, v, fallback)
 		return fallback
 	}
 	return d
@@ -92,18 +92,18 @@ func ValidateCookieConfig() error {
 		return errSameSiteNoneRequiresSecure
 	}
 	if cookieSameSite() == http.SameSiteNoneMode {
-		log.Println("UYARI: COOKIE_SAMESITE=none — CSRF koruması devre dışı. " +
-			"Ayrı origin kullanıyorsanız double-submit CSRF token'ı EKLEYİN.")
+		log.Println("WARNING: COOKIE_SAMESITE=none — CSRF protection disabled. " +
+			"If you use a separate origin, ADD a double-submit CSRF token.")
 	}
 	if !cookieSecure() {
-		log.Println("UYARI: COOKIE_SECURE=false — refresh cookie düz HTTP üzerinde " +
-			"gönderilir. Üretimde true olmalı.")
+		log.Println("WARNING: COOKIE_SECURE=false — refresh cookie is sent over plain HTTP " +
+			"and must be true in production.")
 	}
 	return nil
 }
 
 var errSameSiteNoneRequiresSecure = &configError{
-	"COOKIE_SAMESITE=none için COOKIE_SECURE=true zorunludur (tarayıcı aksi halde cookie'yi reddeder)"}
+	"COOKIE_SECURE=true is required when COOKIE_SAMESITE=none (browsers reject the cookie otherwise)"}
 
 type configError struct{ msg string }
 

@@ -158,6 +158,14 @@ type BudgetCategoryView struct {
 // DateLayout — API'de ve dönem hesabında kullanılan tek tarih formatı.
 const DateLayout = "2006-01-02"
 
+// MaxPeriodOffset — geçmişe/geleceğe kaç dönem bakılabileceğinin sınırı.
+// Hem HTTP handler'ı (?offset=) hem chat (period_offset) bunu kullanır.
+//
+// NEDEN SINIR VAR: offset doğrudan AddDate'e çarpan girer. Sınırsız bırakılsa
+// çok büyük bir offset, gün farkını tutan time.Duration'ı taşırır (±292 yıl)
+// ve çöp bir indeks üretir. 120 dönem, aylık bütçede 10 yıl eder.
+const MaxPeriodOffset = 120
+
 // AppLocation — dönem hesabının hangi takvimde yapılacağı.
 //
 // Konteynerler varsayılan olarak TZ=UTC ile çalışır. Bu ayar olmasaydı

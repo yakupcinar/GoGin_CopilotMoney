@@ -31,7 +31,7 @@ func main() {
 	// edilir. 32 karakterin altı (HMAC-SHA256 için ~256 bit) bir anahtar ya da
 	// geliştirmeden kalma zayıf bir placeholder üretime taşınırsa uygulama açılmaz.
 	if len(os.Getenv("JWT_SECRET")) < 32 {
-		log.Fatal("JWT_SECRET must be set and at least 32 characters (üret: openssl rand -base64 48)")
+		log.Fatal("JWT_SECRET must be set and at least 32 characters (generate: openssl rand -base64 48)")
 	}
 	// Tehlikeli cookie kombinasyonlarını BAŞLANGIÇTA yakala.
 	// SameSite=None + Secure=false olursa tarayıcı cookie'yi sessizce reddeder;
@@ -190,7 +190,7 @@ func intEnv(key string, fallback int) int {
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n <= 0 {
-		log.Printf("%s geçersiz (%q), varsayılan kullanılıyor: %d", key, v, fallback)
+		log.Printf("%s is invalid (%q), using default: %d", key, v, fallback)
 		return fallback
 	}
 	return n

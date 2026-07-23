@@ -39,10 +39,14 @@ func (s *ActionService) Confirm(userID int, token string) (string, error) {
 		return s.confirmUpdateAccount(userID, action)
 	case models.IntentDeleteTransaction:
 		return s.confirmDeleteTransaction(userID, action)
+	case models.IntentBudgetDelete:
+		return s.confirmDeleteBudget(userID, action)
+	case models.IntentBudgetUpdate:
+		return s.confirmUpdateBudget(userID, action)
 	case models.IntentUpdateTransaction:
 		return s.confirmUpdateTransaction(userID, action)
 	default:
-		return "", fmt.Errorf("bu işlem onayla çalıştırılamaz: %q", action.Intent)
+		return "", fmt.Errorf("this action cannot be run via confirmation: %q", action.Intent)
 	}
 }
 
@@ -59,12 +63,12 @@ func (s *ActionService) confirmDeleteCategory(userID int, a *models.PendingActio
 		return "", err
 	}
 	if used > 0 {
-		return "", fmt.Errorf("%w (%d işlemde)", repositories.ErrCategoryInUse, used)
+		return "", fmt.Errorf("%w (in %d transactions)", repositories.ErrCategoryInUse, used)
 	}
 	if err := s.categories.Delete(cat.ID); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%q kategorisi silindi", cat.Name), nil
+	return fmt.Sprintf("category %q deleted", cat.Name), nil
 }
 
 func (s *ActionService) confirmUpdateCategory(userID int, a *models.PendingAction) (string, error) {
@@ -83,7 +87,7 @@ func (s *ActionService) confirmUpdateCategory(userID int, a *models.PendingActio
 	if err := s.categories.Update(cat.ID, name, catType); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("kategori güncellendi: %q (%s)", name, catType), nil
+	return fmt.Sprintf("category updated: %q (%s)", name, catType), nil
 }
 
 // ownedCategory — kaydı çeker ve GERÇEKTEN bu kullanıcının kişisel
@@ -114,12 +118,12 @@ func (s *ActionService) confirmDeleteAccount(userID int, a *models.PendingAction
 		return "", err
 	}
 	if len(txs) > 0 {
-		return "", fmt.Errorf("%w (%d işlem)", repositories.ErrAccountInUse, len(txs))
+		return "", fmt.Errorf("%w (%d transactions)", repositories.ErrAccountInUse, len(txs))
 	}
 	if err := s.accounts.Delete(acc.ID); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%q hesabı silindi", acc.Name), nil
+	return fmt.Sprintf("account %q deleted", acc.Name), nil
 }
 
 func (s *ActionService) confirmUpdateAccount(userID int, a *models.PendingAction) (string, error) {
@@ -128,12 +132,12 @@ func (s *ActionService) confirmUpdateAccount(userID int, a *models.PendingAction
 		return "", err
 	}
 	if a.Params.Name == "" {
-		return "", validationErrorf("yeni isim belirtilmemiş")
+		return "", validationErrorf("no new name provided")
 	}
 	if err := s.accounts.Update(acc.ID, a.Params.Name); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("hesap adı %q olarak güncellendi", a.Params.Name), nil
+	return fmt.Sprintf("account name updated to %q", a.Params.Name), nil
 }
 
 // --- işlem ---
@@ -150,7 +154,7 @@ func (s *ActionService) confirmDeleteTransaction(userID int, a *models.PendingAc
 	if err := s.txs.Delete(tx.ID); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%.2f TL %q işlemi silindi", tx.Amount, tx.Description), nil
+	return fmt.Sprintf("transaction of %.2f TL %q deleted", tx.Amount, tx.Description), nil
 }
 
 // confirmUpdateTransaction — KISMİ güncelleme.
@@ -206,7 +210,7 @@ func (s *ActionService) confirmUpdateTransaction(userID int, a *models.PendingAc
 	if p.TransactionDate != "" {
 		parsed, err := time.Parse("2006-01-02", p.TransactionDate)
 		if err != nil {
-			return "", validationErrorf("tarih okunamadı: %q", p.TransactionDate)
+			return "", validationErrorf("could not parse the date: %q", p.TransactionDate)
 		}
 		merged.TransactionDate = parsed
 	}
@@ -214,10 +218,10 @@ func (s *ActionService) confirmUpdateTransaction(userID int, a *models.PendingAc
 	// --- birleşmiş sonucu YENİDEN doğrula ---
 
 	if merged.Amount <= 0 {
-		return "", validationErrorf("tutar pozitif olmalı (%v)", merged.Amount)
+		return "", validationErrorf("amount must be positive (%v)", merged.Amount)
 	}
 	if !dateInWindow(merged.TransactionDate, startOfDay(time.Now())) {
-		return "", validationErrorf("tarih makul aralığın dışında: %s",
+		return "", validationErrorf("date is outside the reasonable range: %s",
 			merged.TransactionDate.Format("2006-01-02"))
 	}
 
@@ -237,16 +241,57 @@ func (s *ActionService) confirmUpdateTransaction(userID int, a *models.PendingAc
 		}
 	}
 	if matched == nil {
-		return "", validationErrorf("kategori bulunamadı (id=%d)", merged.CategoryID)
+		return "", validationErrorf("category not found (id=%d)", merged.CategoryID)
 	}
 	if matched.Type != merged.Type {
-		return "", validationErrorf("kategori %q (%s) yeni işlem tipiyle (%s) uyuşmuyor",
+		return "", validationErrorf("category %q (%s) does not match the new transaction type (%s)",
 			matched.Name, matched.Type, merged.Type)
 	}
 
 	if err := s.txs.Update(tx.ID, merged); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("işlem güncellendi: %.2f TL %q (%s)",
+	return fmt.Sprintf("transaction updated: %.2f TL %q (%s)",
 		merged.Amount, merged.Description, merged.TransactionDate.Format("2006-01-02")), nil
+}
+
+// --- bütçe ---
+
+// confirmDeleteBudget — bütçe silmenin onay adımı.
+//
+// TOCTOU: token BELİRLİ bir bütçe için üretildi (TargetID). Bu arada kullanıcı
+// bütçesini silip YENİSİNİ kurmuş olabilir; o zaman GetForUser farklı bir
+// id döner. id eşleşmiyorsa token bayattır — yeni bütçeyi YANLIŞLIKLA silme.
+func (s *ActionService) confirmDeleteBudget(userID int, a *models.PendingAction) (string, error) {
+	budget, err := s.budgets.GetForUser(userID)
+	if err != nil {
+		return "", err
+	}
+	if budget.ID != a.TargetID {
+		// Bütçe bu arada değişti: token'ın işaret ettiği bütçe artık yok.
+		return "", repositories.ErrBudgetNotFound
+	}
+	if err := s.budgets.Delete(budget.ID); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("budget %q deleted", budget.Name), nil
+}
+
+// confirmUpdateBudget — bütçe değiştirmenin onay adımı.
+//
+// buildBudgetUpdate'i GÜNCEL duruma karşı yeniden çalıştırır: token beklerken
+// kategori silinmiş/eklenmiş olabilir, merge tazelenir. Sonra TargetID eşleşme
+// kontrolü (bütçe bu arada silinip yenisi kurulduysa reddet), sonra Replace.
+func (s *ActionService) confirmUpdateBudget(userID int, a *models.PendingAction) (string, error) {
+	input, budget, summary, err := s.buildBudgetUpdate(userID, a.Params)
+	if err != nil {
+		return "", err
+	}
+	if budget.ID != a.TargetID {
+		return "", repositories.ErrBudgetNotFound
+	}
+	if err := s.budgets.Replace(budget.ID, *input, budget.StartDate); err != nil {
+		return "", err
+	}
+	return "budget updated: " + summary, nil
 }

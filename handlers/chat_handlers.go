@@ -133,7 +133,8 @@ func (h *ChatHandler) respondConfirmError(c *gin.Context, err error) {
 
 	case errors.Is(err, repositories.ErrCategoryNotFound),
 		errors.Is(err, repositories.ErrAccountNotFound),
-		errors.Is(err, repositories.ErrTransactionNotFound):
+		errors.Is(err, repositories.ErrTransactionNotFound),
+		errors.Is(err, repositories.ErrBudgetNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "Target record not found"})
 
 	case errors.Is(err, chat.ErrGlobalCategory):

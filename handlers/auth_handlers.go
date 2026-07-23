@@ -132,11 +132,11 @@ func (h *AuthHandler) handleRefreshFailure(c *gin.Context, record *models.Refres
 		// Ya saldırgan çaldı ya meşru kullanıcı eskisini oynatıyor — ayırt
 		// edemeyiz. Güvenli taraf: o kullanıcının TÜM oturumlarını kapat.
 		if revokeErr := h.refresh.RevokeAllForUser(record.UserID, now); revokeErr != nil {
-			log.Printf("reuse tespit edildi ama iptal başarısız (user=%d): %v",
+			log.Printf("reuse detected but revocation failed (user=%d): %v",
 				record.UserID, revokeErr)
 		} else {
-			log.Printf("GÜVENLİK: refresh token yeniden kullanıldı, "+
-				"kullanıcının tüm oturumları iptal edildi (user=%d)", record.UserID)
+			log.Printf("SECURITY: refresh token reused, "+
+				"all of the user's sessions were revoked (user=%d)", record.UserID)
 		}
 	} else if !errors.Is(err, repositories.ErrRefreshTokenInvalid) {
 		// Beklenmeyen altyapı hatası — log'a yaz.

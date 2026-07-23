@@ -43,7 +43,7 @@ type groqParser struct {
 func NewGroqParser() (ActionParser, error) {
 	key := os.Getenv("GROQ_API_KEY")
 	if key == "" {
-		return nil, errors.New("GROQ_API_KEY ayarlı değil")
+		return nil, errors.New("GROQ_API_KEY is not set")
 	}
 	model := os.Getenv("GROQ_MODEL")
 	if model == "" {
@@ -133,26 +133,26 @@ func (p *groqParser) parseOnce(ctx context.Context, in ParseInput) ([]models.Par
 
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, 0, fmt.Errorf("istek gövdesi hazırlanamadı: %w", err)
+		return nil, 0, fmt.Errorf("failed to prepare request body: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		p.baseURL+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
-		return nil, 0, fmt.Errorf("istek oluşturulamadı: %w", err)
+		return nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.apiKey)
 
 	resp, err := p.http.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("API'ye ulaşılamadı: %w", err)
+		return nil, 0, fmt.Errorf("failed to reach API: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, 0, fmt.Errorf("cevap okunamadı: %w", err)
+		return nil, 0, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	if resp.StatusCode == http.StatusTooManyRequests {
@@ -160,22 +160,22 @@ func (p *groqParser) parseOnce(ctx context.Context, in ParseInput) ([]models.Par
 		return nil, wait, fmt.Errorf("rate limit (HTTP 429), %v sonra tekrar denenecek", wait)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, 0, fmt.Errorf("API hata döndü (HTTP %d): %s",
+		return nil, 0, fmt.Errorf("API returned an error (HTTP %d): %s",
 			resp.StatusCode, truncateForError(string(body)))
 	}
 
 	var cr chatResponse
 	if err := json.Unmarshal(body, &cr); err != nil {
-		return nil, 0, fmt.Errorf("cevap zarfı çözülemedi: %w", err)
+		return nil, 0, fmt.Errorf("failed to decode response envelope: %w", err)
 	}
 	if cr.Error != nil {
-		return nil, 0, fmt.Errorf("API hatası: %s", cr.Error.Message)
+		return nil, 0, fmt.Errorf("API error: %s", cr.Error.Message)
 	}
 	if len(cr.Choices) == 0 {
-		return nil, 0, errors.New("modelden boş cevap geldi")
+		return nil, 0, errors.New("model returned an empty response")
 	}
 	if cr.Choices[0].FinishReason == "length" {
-		return nil, 0, errors.New("cevap max_tokens sınırında kesildi")
+		return nil, 0, errors.New("response was truncated at the max_tokens limit")
 	}
 
 	// Açık modeller JSON modunda bile bazen ```json ... ``` ile sarmalıyor.
@@ -185,11 +185,11 @@ func (p *groqParser) parseOnce(ctx context.Context, in ParseInput) ([]models.Par
 		Actions []models.ParsedAction `json:"actions"`
 	}
 	if err := json.Unmarshal([]byte(content), &wrapper); err != nil {
-		return nil, 0, fmt.Errorf("model çıktısı JSON olarak okunamadı: %w (ham: %s)",
+		return nil, 0, fmt.Errorf("model output could not be parsed as JSON: %w (raw: %s)",
 			err, truncateForError(content))
 	}
 	if len(wrapper.Actions) == 0 {
-		return nil, 0, errors.New("model hiç eylem döndürmedi")
+		return nil, 0, errors.New("model returned no actions")
 	}
 	return wrapper.Actions, 0, nil
 }

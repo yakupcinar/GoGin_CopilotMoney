@@ -41,26 +41,26 @@ func (s *ActionService) buildTransaction(a *models.ParsedAction, req ChatRequest
 	// Model tutar bulamazsa 0 yazar (alan zorunlu, bir sayı yazmak zorunda).
 	// Gerçekte gözlemlendi: "bugün markete gittim" -> amount: 0
 	if p.Amount <= 0 {
-		return nil, warnings, needsInput, fmt.Errorf("tutar okunamadı (%v), lütfen belirtin", p.Amount)
+		return nil, warnings, needsInput, fmt.Errorf("could not read the amount (%v), please specify it", p.Amount)
 	}
 
 	// --- düzeltilemez: tip ---
 	if p.Type != "income" && p.Type != "expense" {
-		return nil, warnings, needsInput, fmt.Errorf("geçersiz işlem tipi (%q)", p.Type)
+		return nil, warnings, needsInput, fmt.Errorf("invalid transaction type (%q)", p.Type)
 	}
 
 	// --- hesap: MODELDEN DEĞİL, istekten ---
 	// Model çıktısında account_id diye bir alan yok; olsa da okumazdık.
 	acc, err := s.resolveAccount(p, req)
 	if err != nil {
-		return nil, warnings, needsInput, fmt.Errorf("hesap belirlenemedi: %w", err)
+		return nil, warnings, needsInput, fmt.Errorf("could not determine the account: %w", err)
 	}
 
 	// --- açıklama: kırp ---
 	desc := p.Description
 	if r := []rune(desc); len(r) > 100 {
 		desc = string(r[:100])
-		warnings = append(warnings, "açıklama 100 karaktere kırpıldı")
+		warnings = append(warnings, "description truncated to 100 characters")
 	}
 
 	// --- kategori: BEYAZ LİSTE + tip uyumu ---
@@ -76,10 +76,10 @@ func (s *ActionService) buildTransaction(a *models.ParsedAction, req ChatRequest
 		switch {
 		case matched == nil:
 			warnings = append(warnings, fmt.Sprintf(
-				"model listede olmayan bir kategori (id=%d) önerdi, yok sayıldı", *p.CategoryID))
+				"the model suggested a category not in the list (id=%d), ignored", *p.CategoryID))
 		case matched.Type != p.Type:
 			warnings = append(warnings, fmt.Sprintf(
-				"kategori %q (%s) işlem tipiyle (%s) uyuşmuyor, yok sayıldı",
+				"category %q (%s) does not match the transaction type (%s), ignored",
 				matched.Name, matched.Type, p.Type))
 		default:
 			categoryID = matched.ID
@@ -102,14 +102,14 @@ func (s *ActionService) buildTransaction(a *models.ParsedAction, req ChatRequest
 	case err != nil:
 		date = today
 		warnings = append(warnings, fmt.Sprintf(
-			"tarih okunamadı (%q), bugün kullanıldı", p.TransactionDate))
+			"could not parse the date (%q), used today", p.TransactionDate))
 	case date.After(today.AddDate(0, 0, maxFutureDays)):
 		warnings = append(warnings, fmt.Sprintf(
-			"tarih çok ileride (%s), bugün kullanıldı", date.Format("2006-01-02")))
+			"date is too far in the future (%s), used today", date.Format("2006-01-02")))
 		date = today
 	case date.Before(today.AddDate(0, 0, -maxPastDays)):
 		warnings = append(warnings, fmt.Sprintf(
-			"tarih çok geride (%s) — model yanlış yıl üretmiş olabilir, bugün kullanıldı",
+			"date is too far in the past (%s) — the model may have produced the wrong year, used today",
 			date.Format("2006-01-02")))
 		date = today
 	}

@@ -5,6 +5,7 @@ import (
 	"GoGinMoneyCopilot/repositories"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -27,10 +28,10 @@ func (s *ActionService) buildBudget(a *models.ParsedAction, req ChatRequest,
 	// --- zaten bütçe var mı? (create -> varsa çakışma) ---
 	if _, err := s.budgets.GetForUser(req.UserID); err == nil {
 		return nil, warnings, needsInput, fmt.Errorf(
-			"zaten bir bütçeniz var; değiştirmek için bütçe panelini kullanın")
+			"you already have a budget; use the budget panel to modify it")
 	} else if !errors.Is(err, repositories.ErrBudgetNotFound) {
 		// Altyapı hatası: detayı sızdırma.
-		return nil, warnings, needsInput, fmt.Errorf("bütçe durumu kontrol edilemedi")
+		return nil, warnings, needsInput, fmt.Errorf("failed to check budget status")
 	}
 
 	// --- eksik alanlar: değer UYDURMA, kullanıcıya sor ---
@@ -46,7 +47,7 @@ func (s *ActionService) buildBudget(a *models.ParsedAction, req ChatRequest,
 
 	// --- dönem üst sınırı (REST'teki 1..365 ile aynı) ---
 	if p.PeriodDays > 365 {
-		return nil, warnings, needsInput, fmt.Errorf("dönem en fazla 365 gün olabilir")
+		return nil, warnings, needsInput, fmt.Errorf("the period can be at most 365 days")
 	}
 
 	// --- her satırı çöz: ref -> id, tip ve limit kontrolü, yinelenme ---
@@ -55,7 +56,7 @@ func (s *ActionService) buildBudget(a *models.ParsedAction, req ChatRequest,
 	for _, bc := range p.BudgetCategories {
 		if bc.Amount <= 0 {
 			return nil, warnings, needsInput, fmt.Errorf(
-				"%q için geçerli bir limit okunamadı", bc.CategoryRef)
+				"could not read a valid limit for %q", bc.CategoryRef)
 		}
 		// matchCategory: ismi id'ye çevirir; belirsizse ErrAmbiguousTarget.
 		cat, err := matchCategory(categories, bc.CategoryRef)
@@ -64,11 +65,11 @@ func (s *ActionService) buildBudget(a *models.ParsedAction, req ChatRequest,
 		}
 		if cat.Type != "expense" {
 			return nil, warnings, needsInput, fmt.Errorf(
-				"%q bir gider kategorisi değil, bütçelenemez", cat.Name)
+				"%q is not an expense category and cannot be budgeted", cat.Name)
 		}
 		if seen[cat.ID] {
 			return nil, warnings, needsInput, fmt.Errorf(
-				"%q kategorisi birden fazla kez verildi", cat.Name)
+				"category %q was provided more than once", cat.Name)
 		}
 		seen[cat.ID] = true
 		lines = append(lines, models.BudgetCategoryInput{
@@ -79,11 +80,11 @@ func (s *ActionService) buildBudget(a *models.ParsedAction, req ChatRequest,
 	// --- isim: kullanıcı verdiyse onu, yoksa varsayılan ---
 	name := p.Name
 	if name == "" {
-		name = "Bütçe"
+		name = "Budget"
 	}
 	if r := []rune(name); len(r) > 30 {
 		name = string(r[:30])
-		warnings = append(warnings, "bütçe adı 30 karaktere kırpıldı")
+		warnings = append(warnings, "budget name truncated to 30 characters")
 	}
 
 	// --- başlangıç: chat hızlı-giriş içindir, varsayılan bugün ---
@@ -93,4 +94,103 @@ func (s *ActionService) buildBudget(a *models.ParsedAction, req ChatRequest,
 		PeriodDays: p.PeriodDays,
 		Categories: lines,
 	}, warnings, needsInput, nil
+}
+
+// buildBudgetUpdate — budget_update için MEVCUT bütçeyi çekip üstüne kullanıcının
+// değişikliklerini bindirir (oku-değiştir-yaz).
+//
+// NEDEN MERGE: PUT tam-değiştirme olduğu için tüm satırları yeniden üretmek
+// ZORUNDAYIZ. Ama kullanıcı "market'i 2000 yap" dediğinde diğer satırları
+// KORUMALIYIZ — o yüzden mevcut limitlerin üstüne yalnızca belirtilenleri
+// bindiriyoruz. confirmUpdateTransaction'daki mantığın kategori listesiyle hali.
+//
+// NEDEN ORTAK (prepare + confirm): confirm bu fonksiyonu GÜNCEL duruma karşı
+// yeniden çalıştırır — token beklerken kategori silinmiş/değişmişse yakalar
+// (TOCTOU-güvenli). Prepare yalnızca doğrular + özet üretir.
+//
+// KAPSAM: kategori limiti ekle/değiştir + dönem/isim. Kategori ÇIKARMA ve
+// başlangıç tarihi bu dilimde yok (panelden; start_date dönemleri yeniden
+// dilimler, sessizce yapılmamalı).
+func (s *ActionService) buildBudgetUpdate(userID int, p models.ActionParams) (
+	*models.UpdateBudgetInput, *models.Budget, string, error) {
+
+	budget, err := s.budgets.GetForUser(userID)
+	if err != nil {
+		return nil, nil, "", err // ErrBudgetNotFound dahil
+	}
+	lines, err := s.budgets.ListCategories(budget.ID)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	categories, err := s.categories.GetForUser(userID)
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	// Mevcut limitler (id -> limit) + satır sırası; değişiklikleri üstüne bindir.
+	limits := make(map[int]float64, len(lines))
+	order := make([]int, 0, len(lines))
+	for _, ln := range lines {
+		limits[ln.CategoryID] = ln.LimitAmount
+		order = append(order, ln.CategoryID)
+	}
+
+	var changes []string
+
+	// --- header: isim / dönem ---
+	name := budget.Name
+	if p.Name != "" {
+		name = p.Name
+		if r := []rune(name); len(r) > 30 {
+			name = string(r[:30])
+		}
+		changes = append(changes, fmt.Sprintf("name → %q", name))
+	}
+	periodDays := budget.PeriodDays
+	if p.PeriodDays >= 1 {
+		if p.PeriodDays > 365 {
+			return nil, nil, "", validationErrorf("the period can be at most 365 days")
+		}
+		periodDays = p.PeriodDays
+		changes = append(changes, fmt.Sprintf("period → %d days", periodDays))
+	}
+
+	// --- kategori limiti ekle/değiştir ---
+	for _, bc := range p.BudgetCategories {
+		if bc.Amount <= 0 {
+			return nil, nil, "", validationErrorf("could not read a valid limit for %q", bc.CategoryRef)
+		}
+		cat, err := matchCategory(categories, bc.CategoryRef)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		if cat.Type != "expense" {
+			return nil, nil, "", validationErrorf("%q is not an expense category and cannot be budgeted", cat.Name)
+		}
+		if _, exists := limits[cat.ID]; exists {
+			changes = append(changes, fmt.Sprintf("%s → %.2f", cat.Name, bc.Amount))
+		} else {
+			order = append(order, cat.ID)
+			changes = append(changes, fmt.Sprintf("+%s: %.2f", cat.Name, bc.Amount))
+		}
+		limits[cat.ID] = bc.Amount
+	}
+
+	if len(changes) == 0 {
+		return nil, nil, "", validationErrorf("nothing to change was specified")
+	}
+
+	// Tam satır listesini yeniden kur (sıra korunur).
+	catLines := make([]models.BudgetCategoryInput, 0, len(order))
+	for _, id := range order {
+		catLines = append(catLines, models.BudgetCategoryInput{CategoryID: id, LimitAmount: limits[id]})
+	}
+
+	input := &models.UpdateBudgetInput{
+		Name:       name,
+		StartDate:  budget.StartDate.Format(models.DateLayout), // başlangıç KORUNUR
+		PeriodDays: periodDays,
+		Categories: catLines,
+	}
+	return input, budget, strings.Join(changes, ", "), nil
 }

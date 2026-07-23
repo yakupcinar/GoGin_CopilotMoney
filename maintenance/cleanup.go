@@ -110,6 +110,6 @@ func (c *Cleaner) logRun(rep Report) {
 	if rep.Total() == 0 {
 		return
 	}
-	log.Printf("cleanup: %d kayıt silindi (revoked=%d pending=%d refresh=%d)",
+	log.Printf("cleanup: deleted %d records (revoked=%d pending=%d refresh=%d)",
 		rep.Total(), rep.RevokedTokens, rep.PendingActions, rep.RefreshTokens)
 }

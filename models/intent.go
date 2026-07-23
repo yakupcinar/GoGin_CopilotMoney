@@ -27,11 +27,13 @@ const (
 	IntentUpdateAccount     Intent = "update_account"
 	IntentUpdateCategory    Intent = "update_category"
 	IntentUpdateTransaction Intent = "update_transaction"
+	IntentBudgetUpdate      Intent = "budget_update"
 
 	// silme
 	IntentDeleteAccount     Intent = "delete_account"
 	IntentDeleteCategory    Intent = "delete_category"
 	IntentDeleteTransaction Intent = "delete_transaction"
+	IntentBudgetDelete      Intent = "budget_delete"
 
 	// model ne istendiğini anlayamadıysa
 	IntentUnknown Intent = "unknown"
@@ -66,10 +68,12 @@ var intentRisks = map[Intent]Risk{
 	IntentUpdateAccount:     RiskDestructive,
 	IntentUpdateCategory:    RiskDestructive,
 	IntentUpdateTransaction: RiskDestructive,
+	IntentBudgetUpdate:      RiskDestructive,
 
 	IntentDeleteAccount:     RiskDestructive,
 	IntentDeleteCategory:    RiskDestructive,
 	IntentDeleteTransaction: RiskDestructive,
+	IntentBudgetDelete:      RiskDestructive,
 }
 
 // RiskOf — niyetin riskini döner. İkinci dönüş false ise niyet
@@ -112,9 +116,11 @@ type ActionParams struct {
 	CategoryID      *int    `json:"category_id"`
 	TransactionDate string  `json:"transaction_date"`
 
-	// bütçe (budget_set)
+	// bütçe (budget_set / budget_update)
 	PeriodDays       int                   `json:"period_days"`
 	BudgetCategories []BudgetCategoryParam `json:"budget_categories"`
+	// budget_view: 0 = içinde bulunulan dönem, -1 = önceki, -2 = iki önceki.
+	PeriodOffset int `json:"period_offset"`
 }
 
 // BudgetCategoryParam — budget_set niyetinde tek kategori satırı.

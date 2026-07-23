@@ -51,8 +51,8 @@ type ChatRequest struct {
 }
 
 var (
-	ErrEmptyText   = errors.New("metin boş")
-	ErrTextTooLong = errors.New("metin çok uzun")
+	ErrEmptyText   = errors.New("text is empty")
+	ErrTextTooLong = errors.New("text is too long")
 )
 
 // ValidationError — KULLANICIYA GÖSTERİLEBİLİR doğrulama hatası.
@@ -110,11 +110,11 @@ func (s *ActionService) Chat(ctx context.Context, req ChatRequest) ([]Result, er
 
 	categories, err := s.categories.GetForUser(req.UserID)
 	if err != nil {
-		return nil, fmt.Errorf("kategoriler alınamadı: %w", err)
+		return nil, fmt.Errorf("failed to fetch categories: %w", err)
 	}
 	accounts, err := s.accounts.ListForUser(req.UserID)
 	if err != nil {
-		return nil, fmt.Errorf("hesaplar alınamadı: %w", err)
+		return nil, fmt.Errorf("failed to fetch accounts: %w", err)
 	}
 
 	actions, err := s.parser.Parse(ctx, ai.ParseInput{
@@ -124,7 +124,7 @@ func (s *ActionService) Chat(ctx context.Context, req ChatRequest) ([]Result, er
 		Today:      today,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("ayrıştırma başarısız: %w", err)
+		return nil, fmt.Errorf("parsing failed: %w", err)
 	}
 
 	results := make([]Result, 0, len(actions))
@@ -143,7 +143,7 @@ func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
 	if !ok {
 		return Result{
 			Intent: a.Intent, Confidence: a.Confidence,
-			Error: fmt.Sprintf("bilinmeyen veya izin verilmeyen işlem: %q", a.Intent),
+			Error: fmt.Sprintf("unknown or not-allowed action: %q", a.Intent),
 		}
 	}
 
@@ -176,7 +176,7 @@ func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
 		}
 		txs, err := s.txs.ListByAccount(acc.ID)
 		if err != nil {
-			res.Error = "işlemler alınamadı"
+			res.Error = "failed to fetch transactions"
 			return res
 		}
 		res.Data = txs
@@ -191,17 +191,23 @@ func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
 
 	case models.IntentBudgetView:
 		// Görünüm mantığı HTTP handler'ıyla ORTAK (chat.BuildBudgetView).
-		// Chat şimdilik yalnızca içinde bulunulan dönemi gösterir (offset 0);
-		// "geçen ayki bütçem" gibi göreli dönem ileride eklenebilir.
+		// period_offset ile göreli dönem: 0 güncel, -1 önceki. HTTP'deki
+		// ?offset= ile aynı sınır (models.MaxPeriodOffset) — Duration taşmasını
+		// engeller.
+		offset := a.Params.PeriodOffset
+		if offset > models.MaxPeriodOffset || offset < -models.MaxPeriodOffset {
+			res.Error = "period range is too large"
+			return res
+		}
 		now := time.Now().In(models.AppLocation())
-		view, err := BuildBudgetView(s.budgets, s.categories, s.accounts, s.txs, req.UserID, 0, now)
+		view, err := BuildBudgetView(s.budgets, s.categories, s.accounts, s.txs, req.UserID, offset, now)
 		if err != nil {
 			if errors.Is(err, repositories.ErrBudgetNotFound) {
-				res.Error = "henüz bir bütçeniz yok"
+				res.Error = "you don't have a budget yet"
 				return res
 			}
 			// Altyapı hatası: detayı sızdırma, jenerik mesaj.
-			res.Error = "bütçe alınamadı"
+			res.Error = "failed to fetch the budget"
 			return res
 		}
 		res.Data = view
@@ -227,7 +233,7 @@ func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
 		// Aynı isimde kategori zaten varsa kullanıcıyı uyar (engelleme).
 		if existing := findCategoryByName(categories, a.Params.Name); existing != nil {
 			res.Warnings = append(res.Warnings, fmt.Sprintf(
-				"%q adında bir kategori zaten var (id=%d)", existing.Name, existing.ID))
+				"a category named %q already exists (id=%d)", existing.Name, existing.ID))
 		}
 		res.Payload = models.CreateCategoryInput{
 			Name: a.Params.Name, Type: a.Params.CategoryType,
@@ -267,8 +273,14 @@ func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
 	case models.IntentDeleteTransaction, models.IntentUpdateTransaction:
 		s.prepareTransactionAction(&res, a, req)
 
+	case models.IntentBudgetDelete:
+		s.prepareBudgetAction(&res, a, req)
+
+	case models.IntentBudgetUpdate:
+		s.prepareBudgetUpdateAction(&res, a, req)
+
 	default:
-		res.Error = "işlem anlaşılamadı"
+		res.Error = "action could not be understood"
 	}
 
 	return res
@@ -280,7 +292,7 @@ func (s *ActionService) attachConfirmation(res *Result, userID int,
 
 	token, err := newToken()
 	if err != nil {
-		res.Error = "onay kodu üretilemedi"
+		res.Error = "failed to generate confirmation token"
 		return
 	}
 	action := &models.PendingAction{
@@ -289,7 +301,7 @@ func (s *ActionService) attachConfirmation(res *Result, userID int,
 		ExpiresAt: time.Now().Add(pendingTTL),
 	}
 	if err := s.pending.Create(action); err != nil {
-		res.Error = "onay kodu kaydedilemedi"
+		res.Error = "failed to save confirmation token"
 		return
 	}
 

@@ -18,13 +18,13 @@ import (
 // silmek geri alınamaz; kullanıcıya sormak her zaman daha ucuzdur.
 
 var (
-	ErrAmbiguousTarget = errors.New("birden fazla eşleşme var, hangisi olduğunu belirtin")
-	ErrGlobalCategory  = errors.New("global kategoriler chat üzerinden değiştirilemez")
-	ErrTransactionRef  = errors.New("hangi işlem olduğu belirsiz, işlem numarası gerekli")
+	ErrAmbiguousTarget = errors.New("multiple matches found, please specify which one")
+	ErrGlobalCategory  = errors.New("global categories cannot be modified via chat")
+	ErrTransactionRef  = errors.New("the transaction is ambiguous, a transaction id is required")
 
-	ErrNoAccount = errors.New("önce bir hesap oluşturmalısınız")
+	ErrNoAccount = errors.New("you must create an account first")
 	// Birden fazla hesap varsa hangisine yazılacağı belirsizdir.
-	ErrAccountAmbiguous = errors.New("birden fazla hesabınız var, hangisine kaydedileceğini belirtin")
+	ErrAccountAmbiguous = errors.New("you have multiple accounts, please specify which one to use")
 )
 
 // resolveAccount — sıra: açık id > isim > varsayılan hesap.

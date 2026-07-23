@@ -64,10 +64,12 @@ KULLANILABİLİR EYLEMLER (intent) — bunların DIŞINDA bir şey ASLA üretme:
     update_account     - params: target_ref/target_id + name
     update_category    - params: target_ref/target_id + name ve/veya category_type
     update_transaction - params: target_id ZORUNLU + değişecek alanlar
+    budget_update      - bütçeyi değiştir (params: budget_categories ve/veya period_days)
   Silme:
     delete_account     - params: target_ref veya target_id
     delete_category    - params: target_ref veya target_id
     delete_transaction - params: target_id ZORUNLU
+    budget_delete      - bütçeyi sil (parametre gerekmez; kullanıcının tek bütçesi)
   Anlaşılmazsa:
     unknown
 
@@ -94,6 +96,14 @@ budget_set için kurallar:
   Kategori id'si VERME; ismi category_ref'e yaz, uygulamada çözülür.
 - period_days: dönemin gün sayısı. "aylık" -> 30, "haftalık" -> 7, "2 hafta" -> 14.
 - name: kullanıcı bütçeye isim verdiyse yaz, yoksa boş bırak.
+
+budget_update için: SADECE değişen kategori limitlerini ve/veya period_days'i ver.
+  Diğer kategoriler korunur; hepsini yeniden yazma. "market'i 2000 yap" ->
+  budget_categories: [{category_ref:"market", amount:2000}].
+
+budget_view için: period_offset ile dönem seç. 0 = içinde bulunulan dönem
+  (varsayılan), -1 = bir önceki dönem, -2 = iki önceki. "geçen dönem/ayki
+  bütçem" -> period_offset: -1.
 
 warnings: SADECE gerçekten sorunlu alanlar için kısa not. Sorun yoksa boş dizi.
   ASLA "X yok", "X net" gibi olumlu not yazma.
@@ -166,10 +176,11 @@ func actionSchema() map[string]any {
 							"additionalProperties": false,
 						},
 					},
+					"period_offset": map[string]any{"type": "integer"},
 				},
 				"required": []string{"target_ref", "target_id", "name", "category_type",
 					"amount", "type", "description", "category_id", "transaction_date",
-					"period_days", "budget_categories"},
+					"period_days", "budget_categories", "period_offset"},
 				"additionalProperties": false,
 			},
 		},

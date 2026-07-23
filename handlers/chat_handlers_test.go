@@ -509,7 +509,7 @@ func TestChat_BudgetView_NoBudget(t *testing.T) {
 		t.Fatalf("beklenen 200, gelen %d", w.Code)
 	}
 	res := firstResult(t, w)
-	if res.Error != "henüz bir bütçeniz yok" {
+	if res.Error != "you don't have a budget yet" {
 		t.Fatalf("anlaşılır 'bütçe yok' mesajı beklendi, gelen: %q", res.Error)
 	}
 }
@@ -650,7 +650,261 @@ func TestChat_BudgetSet_ExistingBudgetRejected(t *testing.T) {
 	if res.Payload != nil {
 		t.Fatalf("bütçe varken taslak üretilmemeli")
 	}
-	if !strings.Contains(res.Error, "zaten bir bütçeniz var") {
+	if !strings.Contains(res.Error, "you already have a budget") {
 		t.Fatalf("anlaşılır 'zaten var' mesajı beklendi, gelen: %q", res.Error)
+	}
+}
+
+// budget_delete: yıkıcı niyet — ONAY İSTER, hemen silmez.
+func TestChat_BudgetDelete_RequiresConfirmation(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{Intent: models.IntentBudgetDelete})
+	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Aylık",
+		StartDate: models.CivilDate(time.Now()), PeriodDays: 30},
+		[]models.BudgetCategory{{ID: 1, BudgetID: 1, CategoryID: 1, LimitAmount: 500}})
+
+	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"bütçemi sil"}`))
+	if res.Risk != models.RiskDestructive {
+		t.Fatalf("yıkıcı kademe beklendi, gelen: %q", res.Risk)
+	}
+	if !res.RequiresConfirmation || res.Token == "" {
+		t.Fatalf("onay + token beklendi, gelen: %+v", res)
+	}
+	// Henüz SİLİNMEMELİ — sadece onay bekliyor.
+	if len(f.budgets.budgets) != 1 {
+		t.Fatalf("onaydan önce bütçe silinmemeli")
+	}
+}
+
+// Bütçesi olmayan kullanıcı: token HİÇ üretilmez (boşuna "emin misin?" sorma).
+func TestChat_BudgetDelete_NoBudget(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{Intent: models.IntentBudgetDelete})
+	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"bütçemi sil"}`))
+	if res.RequiresConfirmation || res.Token != "" {
+		t.Fatalf("bütçe yokken token üretilmemeli")
+	}
+	if res.Error != "you don't have a budget to delete" {
+		t.Fatalf("anlaşılır mesaj beklendi, gelen: %q", res.Error)
+	}
+}
+
+// Onay akışının tamamı: chat -> token -> confirm -> gerçekten silinir.
+func TestConfirm_BudgetDelete_Deletes(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{Intent: models.IntentBudgetDelete})
+	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Aylık",
+		StartDate: models.CivilDate(time.Now()), PeriodDays: 30}, nil)
+
+	token := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"bütçemi sil"}`)).Token
+	w := performRequest(f.router, "POST", "/actions/confirm", `{"token":"`+token+`"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("beklenen 200, gelen %d (body: %s)", w.Code, w.Body.String())
+	}
+	if len(f.budgets.budgets) != 0 {
+		t.Fatalf("onaydan sonra bütçe silinmiş olmalı")
+	}
+}
+
+// TOCTOU: token bütçe id=1 için üretildi; bu arada bütçe silinip YENİSİ (id=2)
+// kuruldu. Onay YENİ bütçeyi silmemeli — token bayat.
+func TestConfirm_BudgetDelete_StaleTokenRejected(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{Intent: models.IntentBudgetDelete})
+	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Eski",
+		StartDate: models.CivilDate(time.Now()), PeriodDays: 30}, nil)
+
+	token := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"bütçemi sil"}`)).Token
+
+	// Kullanıcı bu arada bütçesini değiştirdi: eski gitti, yeni (id=2) geldi.
+	_ = f.budgets.Delete(1)
+	f.budgets.seed(&models.Budget{ID: 2, UserID: chatUserID, Name: "Yeni",
+		StartDate: models.CivilDate(time.Now()), PeriodDays: 15}, nil)
+
+	w := performRequest(f.router, "POST", "/actions/confirm", `{"token":"`+token+`"}`)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("bayat token 404 vermeli, gelen %d (body: %s)", w.Code, w.Body.String())
+	}
+	// Yeni bütçe DOKUNULMAMIŞ olmalı.
+	if _, ok := f.budgets.budgets[2]; !ok {
+		t.Fatalf("bayat token yeni bütçeyi sildi — TOCTOU koruması başarısız")
+	}
+}
+
+// budget_update: yıkıcı niyet — onay ister, hemen değiştirmez.
+func TestChat_BudgetUpdate_RequiresConfirmation(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{
+		Intent: models.IntentBudgetUpdate,
+		Params: models.ActionParams{
+			BudgetCategories: []models.BudgetCategoryParam{{CategoryRef: "Yeme", Amount: 2000}},
+		},
+	})
+	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Aylık",
+		StartDate: models.CivilDate(time.Now()), PeriodDays: 30},
+		[]models.BudgetCategory{{ID: 1, BudgetID: 1, CategoryID: 1, LimitAmount: 500}})
+
+	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"yeme limitini 2000 yap"}`))
+	if res.Risk != models.RiskDestructive || !res.RequiresConfirmation || res.Token == "" {
+		t.Fatalf("yıkıcı + onay + token beklendi, gelen: %+v", res)
+	}
+	// Henüz değişmemeli.
+	if f.budgets.lines[1][0].LimitAmount != 500 {
+		t.Fatalf("onaydan önce limit değişmemeli")
+	}
+}
+
+// Onay akışı: mevcut limiti değiştirir, DİĞER kategorileri korur.
+func TestConfirm_BudgetUpdate_ChangesLimitKeepsOthers(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{
+		Intent: models.IntentBudgetUpdate,
+		Params: models.ActionParams{
+			BudgetCategories: []models.BudgetCategoryParam{{CategoryRef: "Yeme", Amount: 2000}},
+		},
+	})
+	// İki kategorili bütçe: Yeme(1)=500, Bos Kategori(2)=300.
+	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Aylık",
+		StartDate: models.CivilDate(time.Now()), PeriodDays: 30},
+		[]models.BudgetCategory{
+			{ID: 1, BudgetID: 1, CategoryID: 1, LimitAmount: 500},
+			{ID: 2, BudgetID: 1, CategoryID: 2, LimitAmount: 300},
+		})
+
+	token := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"yeme 2000"}`)).Token
+	w := performRequest(f.router, "POST", "/actions/confirm", `{"token":"`+token+`"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("beklenen 200, gelen %d (body: %s)", w.Code, w.Body.String())
+	}
+
+	// Yeme 2000 oldu, Bos Kategori 300 KORUNDU.
+	limits := map[int]float64{}
+	for _, ln := range f.budgets.lines[1] {
+		limits[ln.CategoryID] = ln.LimitAmount
+	}
+	if limits[1] != 2000 {
+		t.Fatalf("Yeme limiti 2000 olmalı, gelen %v", limits[1])
+	}
+	if limits[2] != 300 {
+		t.Fatalf("Bos Kategori limiti 300 korunmalı, gelen %v", limits[2])
+	}
+}
+
+// Onay akışı: yeni kategori ekler, mevcudu korur.
+func TestConfirm_BudgetUpdate_AddsCategory(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{
+		Intent: models.IntentBudgetUpdate,
+		Params: models.ActionParams{
+			BudgetCategories: []models.BudgetCategoryParam{{CategoryRef: "Bos Kategori", Amount: 400}},
+		},
+	})
+	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Aylık",
+		StartDate: models.CivilDate(time.Now()), PeriodDays: 30},
+		[]models.BudgetCategory{{ID: 1, BudgetID: 1, CategoryID: 1, LimitAmount: 500}})
+
+	token := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"bos kategoriye 400 ekle"}`)).Token
+	w := performRequest(f.router, "POST", "/actions/confirm", `{"token":"`+token+`"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("beklenen 200, gelen %d (body: %s)", w.Code, w.Body.String())
+	}
+	if len(f.budgets.lines[1]) != 2 {
+		t.Fatalf("2 kategori olmalı (mevcut + yeni), gelen %d", len(f.budgets.lines[1]))
+	}
+}
+
+// Değişecek bir şey yoksa reddet (boş liste, dönem 0, isim yok).
+func TestChat_BudgetUpdate_NothingToChange(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{Intent: models.IntentBudgetUpdate})
+	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Aylık",
+		StartDate: models.CivilDate(time.Now()), PeriodDays: 30}, nil)
+
+	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"bütçeyi güncelle"}`))
+	if res.RequiresConfirmation {
+		t.Fatalf("değişiklik yokken token üretilmemeli")
+	}
+	if res.Error != "nothing to change was specified" {
+		t.Fatalf("anlaşılır mesaj beklendi, gelen: %q", res.Error)
+	}
+}
+
+// Bütçesi olmayan kullanıcı değiştirmek isterse.
+func TestChat_BudgetUpdate_NoBudget(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{
+		Intent: models.IntentBudgetUpdate,
+		Params: models.ActionParams{
+			BudgetCategories: []models.BudgetCategoryParam{{CategoryRef: "Yeme", Amount: 2000}},
+		},
+	})
+	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"yeme 2000"}`))
+	if res.RequiresConfirmation {
+		t.Fatalf("bütçe yokken token üretilmemeli")
+	}
+	if res.Error != "you don't have a budget to modify" {
+		t.Fatalf("anlaşılır mesaj beklendi, gelen: %q", res.Error)
+	}
+}
+
+// TOCTOU: token id=1 içindi; bütçe silinip yenisi (id=2) kuruldu -> reddet.
+func TestConfirm_BudgetUpdate_StaleTokenRejected(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{
+		Intent: models.IntentBudgetUpdate,
+		Params: models.ActionParams{
+			BudgetCategories: []models.BudgetCategoryParam{{CategoryRef: "Yeme", Amount: 2000}},
+		},
+	})
+	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Eski",
+		StartDate: models.CivilDate(time.Now()), PeriodDays: 30},
+		[]models.BudgetCategory{{ID: 1, BudgetID: 1, CategoryID: 1, LimitAmount: 500}})
+
+	token := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"yeme 2000"}`)).Token
+
+	_ = f.budgets.Delete(1)
+	f.budgets.seed(&models.Budget{ID: 2, UserID: chatUserID, Name: "Yeni",
+		StartDate: models.CivilDate(time.Now()), PeriodDays: 15},
+		[]models.BudgetCategory{{ID: 1, BudgetID: 2, CategoryID: 1, LimitAmount: 999}})
+
+	w := performRequest(f.router, "POST", "/actions/confirm", `{"token":"`+token+`"}`)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("bayat token 404 vermeli, gelen %d", w.Code)
+	}
+	// Yeni bütçe DEĞİŞMEMİŞ olmalı.
+	if f.budgets.lines[2][0].LimitAmount != 999 {
+		t.Fatalf("bayat token yeni bütçeyi değiştirdi — TOCTOU koruması başarısız")
+	}
+}
+
+// budget_view göreli dönem: period_offset ile geçmiş dönem.
+func TestChat_BudgetView_PreviousPeriod(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{
+		Intent: models.IntentBudgetView,
+		Params: models.ActionParams{PeriodOffset: -1},
+	})
+	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Aylık",
+		StartDate: models.CivilDate(time.Now().AddDate(0, 0, -5)), PeriodDays: 30},
+		[]models.BudgetCategory{{ID: 1, BudgetID: 1, CategoryID: 1, LimitAmount: 500}})
+
+	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"geçen dönem bütçem"}`))
+	if res.Error != "" {
+		t.Fatalf("beklenmeyen hata: %s", res.Error)
+	}
+	raw, _ := json.Marshal(res.Data)
+	var view models.BudgetView
+	if err := json.Unmarshal(raw, &view); err != nil {
+		t.Fatalf("BudgetView çözülemedi: %v", err)
+	}
+	if view.Period.Offset != -1 {
+		t.Fatalf("offset -1 beklendi, gelen %d", view.Period.Offset)
+	}
+	if !view.Period.Historical {
+		t.Fatalf("geçmiş dönem historical:true olmalı")
+	}
+}
+
+// Aşırı offset: Duration taşmasını engelle, anlaşılır mesaj ver.
+func TestChat_BudgetView_OffsetOutOfRange(t *testing.T) {
+	f := newChatFixture(t, models.ParsedAction{
+		Intent: models.IntentBudgetView,
+		Params: models.ActionParams{PeriodOffset: 99999},
+	})
+	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Aylık",
+		StartDate: models.CivilDate(time.Now()), PeriodDays: 30}, nil)
+
+	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"999 dönem önceki bütçem"}`))
+	if res.Error != "period range is too large" {
+		t.Fatalf("anlaşılır sınır mesajı beklendi, gelen: %q", res.Error)
 	}
 }

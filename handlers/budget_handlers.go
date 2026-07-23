@@ -12,13 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// maxPeriodOffset — geçmişe/geleceğe kaç dönem bakılabileceğinin sınırı.
-//
-// NEDEN SINIR VAR: offset doğrudan AddDate'e çarpan olarak giriyor. Sınırsız
-// bırakılsaydı çok büyük bir offset, gün farkını tutan time.Duration'ı taşırır
-// (±292 yıl) ve çöp bir indeks üretirdi. 120 dönem, aylık bütçede 10 yıl eder.
-const maxPeriodOffset = 120
-
 type BudgetHandler struct {
 	budgets      repositories.BudgetRepository
 	categories   repositories.CategoryRepository
@@ -127,7 +120,7 @@ func (h *BudgetHandler) GetBudget(c *gin.Context) {
 	offset := 0
 	if raw := c.Query("offset"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed > maxPeriodOffset || parsed < -maxPeriodOffset {
+		if err != nil || parsed > models.MaxPeriodOffset || parsed < -models.MaxPeriodOffset {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid offset"})
 			return
 		}
