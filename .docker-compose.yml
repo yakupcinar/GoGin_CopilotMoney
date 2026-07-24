@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy   # Postgres HAZIR olmadan uygulama başlamaz
+    env_file: .env                    # JWT_SECRET, GROQ_*, TTL'ler...
+    environment:
+      DB_HOST: db                     # .env'deki 127.0.0.1'i EZER (servis adı)
+      DB_PORT: "5432"
+      GIN_MODE: release               # gin otomatik okur, debug log kapanır
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

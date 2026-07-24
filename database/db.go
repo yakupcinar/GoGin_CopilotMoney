@@ -25,9 +25,19 @@ func InitDB() error {
 		os.Getenv("DB_NAME"),
 	)
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: dbLogger()})
+	// Docker'da Postgres uygulamadan biraz sonra hazır olabilir; birkaç kez dene.
+	var db *gorm.DB
+	var err error
+	for i := 0; i < 10; i++ {
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: dbLogger()})
+		if err == nil {
+			break
+		}
+		log.Printf("waiting for database... (%d/10): %v", i+1, err)
+		time.Sleep(2 * time.Second)
+	}
 	if err != nil {
-		return fmt.Errorf("connection is unsuccessful: %w", err)
+		return fmt.Errorf("connection is unsuccessful after retries: %w", err)
 	}
 	DB = db
 	fmt.Println("Has Been Connected to Database!")
