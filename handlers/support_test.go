@@ -520,6 +520,17 @@ func (r *fakeTokenRepo) DeleteExpired(ctx context.Context, before time.Time) (in
 	return 0, nil
 }
 
+func (r *fakeTokenRepo) ListActive(ctx context.Context, now time.Time) ([]models.RevokedToken, error) {
+	if err := r.injected("ListActive"); err != nil {
+		return nil, err
+	}
+	var out []models.RevokedToken
+	for jti := range r.revoked {
+		out = append(out, models.RevokedToken{JTI: jti, ExpiresAt: now.Add(time.Hour)})
+	}
+	return out, nil
+}
+
 func (r *fakeTokenRepo) IsRevoked(ctx context.Context, jti string) (bool, error) {
 	if err := r.injected("IsRevoked"); err != nil {
 		return false, err

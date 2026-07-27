@@ -58,6 +58,24 @@ func main() {
 	transactionRepo := repositories.NewTransactionRepository(database.DB)
 	budgetRepo := repositories.NewBudgetRepository(database.DB)
 	tokenRepo := repositories.NewTokenRepository(database.DB)
+
+	// Redis varsa denylist'in TAM KOPYASI orada tutulur; her istekteki
+	// "bu token iptal mi" sorusu Postgres yerine bellekten cevaplanır.
+	//
+	// Warm-up ÖNCE çalışır (henüz sarmalanmamış gorm repo'suyla), sonra
+	// sarmalama yapılır. Warm-up başarısız olursa ölümcül değil: nöbetçi
+	// yazılmadığı için okumalar Postgres'e düşer — yavaş ama doğru.
+	if database.RDB != nil {
+		warmCtx, warmCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		n, err := repositories.WarmUpDenylist(warmCtx, database.RDB, tokenRepo, time.Now())
+		warmCancel()
+		if err != nil {
+			log.Println("denylist warm-up failed, reads will fall back to postgres:", err)
+		} else {
+			log.Printf("denylist warm-up: %d active revocation(s) loaded into redis", n)
+		}
+		tokenRepo = repositories.NewRedisTokenRepository(database.RDB, tokenRepo)
+	}
 	pendingRepo := repositories.NewPendingActionRepository(database.DB)
 	refreshRepo := repositories.NewRefreshTokenRepository(database.DB)
 

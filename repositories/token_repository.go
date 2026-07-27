@@ -14,6 +14,12 @@ type TokenRepository interface {
 	Revoke(ctx context.Context, jti string, expiresAt time.Time) error
 	IsRevoked(ctx context.Context, jti string) (bool, error)
 	DeleteExpired(ctx context.Context, before time.Time) (int64, error)
+	// ListActive — süresi dolmamış tüm iptal kayıtları.
+	//
+	// Yalnızca Redis warm-up'ı için var: kopyanın TAM olması gerektiği için
+	// açılışta kaynaktaki kümenin tamamı okunmalı. Küme küçüktür (yalnızca
+	// son ACCESS_TOKEN_TTL içindeki logout'lar), o yüzden bu ucuz bir sorgu.
+	ListActive(ctx context.Context, now time.Time) ([]models.RevokedToken, error)
 }
 
 type gormTokenRepository struct {
@@ -30,6 +36,14 @@ func (r *gormTokenRepository) Revoke(ctx context.Context, jti string, expiresAt 
 		return fmt.Errorf("token couldn't be revoked: %v", err)
 	}
 	return nil
+}
+
+func (r *gormTokenRepository) ListActive(ctx context.Context, now time.Time) ([]models.RevokedToken, error) {
+	var tokens []models.RevokedToken
+	if err := r.db.WithContext(ctx).Where("expires_at > ?", now).Find(&tokens).Error; err != nil {
+		return nil, fmt.Errorf("active revoked tokens couldn't be fetched: %v", err)
+	}
+	return tokens, nil
 }
 
 func (r *gormTokenRepository) IsRevoked(ctx context.Context, jti string) (bool, error) {

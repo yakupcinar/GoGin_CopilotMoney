@@ -19,6 +19,9 @@ type fakeTokens struct {
 
 func (f *fakeTokens) Revoke(context.Context, string, time.Time) error { return nil }
 func (f *fakeTokens) IsRevoked(context.Context, string) (bool, error) { return false, nil }
+func (f *fakeTokens) ListActive(context.Context, time.Time) ([]models.RevokedToken, error) {
+	return nil, nil
+}
 func (f *fakeTokens) DeleteExpired(context.Context, time.Time) (int64, error) {
 	f.calls++
 	return f.deleted, f.err
