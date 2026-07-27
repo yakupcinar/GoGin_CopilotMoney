@@ -4,8 +4,8 @@ import "time"
 
 type Transaction struct {
 	ID              int       `json:"id" gorm:"primaryKey"`
-	AccountID       int       `json:"account_id" gorm:"not null"`
-	CategoryID      int       `json:"category_id" gorm:"not null"`
+	AccountID       int       `json:"account_id" gorm:"not null;index"`
+	CategoryID      int       `json:"category_id" gorm:"not null;index"`
 	Amount          float64   `json:"amount" gorm:"type:numeric(12,2);not null"`
 	Type            string    `json:"type" gorm:"size:10;not null;check:type IN ('income','expense')"`
 	Description     string    `json:"description" gorm:"size:100"`
