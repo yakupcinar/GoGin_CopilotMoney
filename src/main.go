@@ -45,6 +45,13 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Redis opsiyonel: REDIS_ADDR boşsa devre dışı kalır ve denylist yalnızca
+	// Postgres'ten okunur. Ama adres VERİLDİYSE ulaşılamıyor olması sessizce
+	// geçilmemeli — yanlış yapılandırmayı trafik almadan önce gör.
+	if err := database.InitRedis(); err != nil {
+		log.Fatal(err)
+	}
+
 	accountRepo := repositories.NewAccountRepository(database.DB)
 	userRepo := repositories.NewUserRepository(database.DB)
 	categoryRepo := repositories.NewCategoryRepository(database.DB)
@@ -177,6 +184,9 @@ func main() {
 
 	if sqlDB, err := database.DB.DB(); err == nil {
 		sqlDB.Close()
+	}
+	if err := database.CloseRedis(); err != nil {
+		log.Println("redis close:", err)
 	}
 
 	log.Println("Server exited gracefully")
