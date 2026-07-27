@@ -1,12 +1,13 @@
 package handlers
 
-// Bu dosya "beklenmeyen altyapı hatası" (DB çöktü, bağlantı koptu vb.)
-// senaryolarını test eder. Fake repo'lara errBoom enjekte edilir ve
-// handler'ın 500 döndürmesi + hata detayını client'a SIZDIRMAMASI beklenir.
+// This file tests "unexpected infrastructure failure" scenarios (the DB went
+// down, the connection dropped, and so on). errBoom is injected into the fake
+// repositories and the handler is expected to return 500 WITHOUT leaking the
+// error detail to the client.
 //
-// Bu yollar gerçek veritabanıyla test edilemez: Postgres'i test sırasında
-// bilerek çökertmek gerekirdi. Fake repo ile tek satırda simüle ediliyor —
-// dependency injection'ın en pratik faydalarından biri budur.
+// These paths cannot be exercised against a real database: it would mean
+// deliberately crashing Postgres mid-test. A fake repo simulates it in a
+// single line — one of the most practical benefits of dependency injection.
 
 import (
 	"GoGinMoneyCopilot/models"
@@ -16,21 +17,21 @@ import (
 	"time"
 )
 
-// assert500 hem status kodunu hem de hata detayının sızmadığını doğrular.
+// assert500 verifies both the status code and that no error detail leaked.
 func assert500(t *testing.T, code int, body string) {
 	t.Helper()
 	if code != http.StatusInternalServerError {
-		t.Fatalf("beklenen 500, gelen %d (body: %s)", code, body)
+		t.Fatalf("expected 500, got %d (body: %s)", code, body)
 	}
 	if strings.Contains(body, errBoom.Error()) {
-		t.Fatalf("iç hata detayı client'a sızdı: %s", body)
+		t.Fatalf("internal error detail leaked to the client: %s", body)
 	}
 	if !strings.Contains(body, "Internal server error") {
-		t.Fatalf("beklenen jenerik hata mesajı yok: %s", body)
+		t.Fatalf("the expected generic error message is missing: %s", body)
 	}
 }
 
-// ---- account 500 yolları ----
+// ---- account 500 paths ----
 
 func TestCreateAccount_RepoErrorReturns500(t *testing.T) {
 	repo := newFakeAccountRepo()
@@ -53,7 +54,7 @@ func TestGetAccount_RepoErrorReturns500(t *testing.T) {
 	assert500(t, w.Code, w.Body.String())
 }
 
-// Admin yolu farklı repo metodunu (GetByID) kullanır; o da 500 vermeli.
+// The admin path uses a different repo method (GetByID); it must also 500.
 func TestGetAccount_AdminRepoErrorReturns500(t *testing.T) {
 	repo := newFakeAccountRepo()
 	repo.seed(&models.Account{ID: 1, Name: "Hesap", UserID: 1})
@@ -68,7 +69,7 @@ func TestGetAccount_AdminRepoErrorReturns500(t *testing.T) {
 func TestUpdateAccount_RepoErrorReturns500(t *testing.T) {
 	repo := newFakeAccountRepo()
 	repo.seed(&models.Account{ID: 1, Name: "Hesap", UserID: 1})
-	repo.failOn("Update", errBoom) // sahiplik kontrolü geçer, güncelleme patlar
+	repo.failOn("Update", errBoom) // the ownership check passes, the update fails
 	r := setupAccountRouter(repo, 1, models.RoleClient)
 
 	w := performRequest(r, "PUT", "/accounts/1", `{"name":"Yeni Ad"}`)
@@ -86,11 +87,11 @@ func TestDeleteAccount_RepoErrorReturns500(t *testing.T) {
 
 	assert500(t, w.Code, w.Body.String())
 	if len(repo.accounts) != 1 {
-		t.Fatalf("hata durumunda hesap silinmiş görünüyor")
+		t.Fatalf("the account appears to have been deleted despite the error")
 	}
 }
 
-// ---- category 500 yolları ----
+// ---- category 500 paths ----
 
 func TestCreateCategory_RepoErrorReturns500(t *testing.T) {
 	repo := newFakeCategoryRepo()
@@ -126,7 +127,7 @@ func TestUpdateCategory_FetchErrorReturns500(t *testing.T) {
 func TestUpdateCategory_UpdateErrorReturns500(t *testing.T) {
 	repo := newFakeCategoryRepo()
 	repo.seed(&models.Category{ID: 1, Name: "Kategori", Type: "income", UserID: intPtr(1)})
-	repo.failOn("Update", errBoom) // yetki kontrolü geçer, güncelleme patlar
+	repo.failOn("Update", errBoom) // the authorization check passes, the update fails
 	r := setupCategoryRouter(repo, 1, models.RoleClient)
 
 	w := performRequest(r, "PUT", "/categories/1", `{"name":"Yeni","type":"income"}`)
@@ -145,13 +146,13 @@ func TestDeleteCategory_RepoErrorReturns500(t *testing.T) {
 	assert500(t, w.Code, w.Body.String())
 }
 
-// ---- transaction 500 yolları ----
+// ---- transaction 500 paths ----
 
 func TestCreateTransaction_RepoErrorReturns500(t *testing.T) {
 	accRepo := newFakeAccountRepo()
 	accRepo.seed(&models.Account{ID: 1, Name: "Hesap", UserID: 1})
 	txRepo := newFakeTransactionRepo()
-	txRepo.failOn("Create", errBoom) // hesap sahipliği doğrulanır, kayıt patlar
+	txRepo.failOn("Create", errBoom) // account ownership is verified, the insert fails
 	r := setupTransactionRouter(txRepo, accRepo, 1, models.RoleClient)
 
 	body := `{"account_id":1,"category_id":1,"amount":10,"type":"income","transaction_date":"2026-07-13T00:00:00Z"}`
@@ -160,7 +161,8 @@ func TestCreateTransaction_RepoErrorReturns500(t *testing.T) {
 	assert500(t, w.Code, w.Body.String())
 }
 
-// Transaction akışında hesabı çeken repo patlarsa da 500 dönmeli.
+// If the repo that loads the account fails during the transaction flow, the
+// response must also be 500.
 func TestCreateTransaction_AccountRepoErrorReturns500(t *testing.T) {
 	accRepo := newFakeAccountRepo()
 	accRepo.seed(&models.Account{ID: 1, Name: "Hesap", UserID: 1})
@@ -173,7 +175,7 @@ func TestCreateTransaction_AccountRepoErrorReturns500(t *testing.T) {
 
 	assert500(t, w.Code, w.Body.String())
 	if len(txRepo.transactions) != 0 {
-		t.Fatalf("hesap doğrulanamadan transaction oluşturuldu")
+		t.Fatalf("a transaction was created before the account could be verified")
 	}
 }
 
@@ -227,11 +229,11 @@ func TestDeleteTransaction_RepoErrorReturns500(t *testing.T) {
 
 	assert500(t, w.Code, w.Body.String())
 	if len(txRepo.transactions) != 1 {
-		t.Fatalf("hata durumunda transaction silinmiş görünüyor")
+		t.Fatalf("the transaction appears to have been deleted despite the error")
 	}
 }
 
-// ---- auth 500 yolları ----
+// ---- auth 500 paths ----
 
 func TestRegister_RepoErrorReturns500(t *testing.T) {
 	userRepo := newFakeUserRepo()
@@ -243,8 +245,8 @@ func TestRegister_RepoErrorReturns500(t *testing.T) {
 	assert500(t, w.Code, w.Body.String())
 }
 
-// DB patladığında login "şifre yanlış" (401) DEĞİL, 500 dönmeli:
-// altyapı arızası kimlik doğrulama hatası gibi görünmemeli.
+// When the DB fails, login must return 500 — NOT "wrong password" (401):
+// an infrastructure failure must not masquerade as an authentication error.
 func TestLogin_RepoErrorReturns500(t *testing.T) {
 	userRepo := newFakeUserRepo()
 	userRepo.failOn("GetByUsername", errBoom)
@@ -264,25 +266,25 @@ func TestLogout_RepoErrorReturns500(t *testing.T) {
 
 	assert500(t, w.Code, w.Body.String())
 	if tokenRepo.revoked["test-jti"] {
-		t.Fatalf("revoke başarısızken token iptal edilmiş görünüyor")
+		t.Fatalf("the token appears revoked even though revoke failed")
 	}
 }
 
-// Bilinen domain hataları 500'e karışmamalı: repo ErrUserNotFound dönerse
-// login yine 401 vermeli (regresyon koruması).
+// Known domain errors must not be conflated with 500: if the repo returns
+// ErrUserNotFound, login must still answer 401 (regression guard).
 func TestLogin_UnknownUserStill401(t *testing.T) {
 	r := setupAuthRouter(newFakeUserRepo(), newFakeTokenRepo())
 
 	w := performRequest(r, "POST", "/login", `{"username":"olmayan","password":"herhangibirsifre"}`)
 
 	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("beklenen 401, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 401, got %d (body: %s)", w.Code, w.Body.String())
 	}
 }
 
-// ---- budget 500 yolları ----
+// ---- budget 500 paths ----
 
-// createBudgetBody — geçerli tek kategorili gövde.
+// validBudgetBody — a valid body with a single category.
 const validBudgetBody = `{"name":"Aylık","start_date":"2026-01-05","period_days":30,"categories":[{"category_id":3,"limit_amount":6000}]}`
 
 func seedBudgetCategory(catRepo *fakeCategoryRepo) {
@@ -299,7 +301,7 @@ func TestCreateBudget_RepoErrorReturns500(t *testing.T) {
 	w := performRequest(r, "POST", "/budgets", validBudgetBody)
 	assert500(t, w.Code, w.Body.String())
 	if len(bRepo.budgets) != 0 {
-		t.Fatalf("hata olmasına rağmen bütçe oluştu")
+		t.Fatalf("a budget was created despite the error")
 	}
 }
 
@@ -313,11 +315,11 @@ func TestCreateBudget_CategoryRepoErrorReturns500(t *testing.T) {
 	w := performRequest(r, "POST", "/budgets", validBudgetBody)
 	assert500(t, w.Code, w.Body.String())
 	if len(bRepo.budgets) != 0 {
-		t.Fatalf("kategori doğrulanamadan bütçe oluştu")
+		t.Fatalf("a budget was created before the category could be verified")
 	}
 }
 
-// seededBudget — GET yolları için hazır bir bütçe + hesap kurar.
+// seededBudgetRouter — sets up a ready budget + account for the GET paths.
 func seededBudgetRouter(t *testing.T, bRepo *fakeBudgetRepo, catRepo *fakeCategoryRepo, accRepo *fakeAccountRepo, txRepo *fakeTransactionRepo) {
 	t.Helper()
 	seedBudgetCategory(catRepo)
@@ -395,7 +397,7 @@ func TestDeleteBudget_RepoErrorReturns500(t *testing.T) {
 	w := performRequest(r, "DELETE", "/budgets", "")
 	assert500(t, w.Code, w.Body.String())
 	if len(bRepo.budgets) != 1 {
-		t.Fatalf("hata olmasına rağmen bütçe silindi")
+		t.Fatalf("the budget was deleted despite the error")
 	}
 }
 
@@ -409,6 +411,6 @@ func TestDeleteCategory_BudgetCountErrorReturns500(t *testing.T) {
 	w := performRequest(r, "DELETE", "/categories/3", "")
 	assert500(t, w.Code, w.Body.String())
 	if _, ok := repo.categories[3]; !ok {
-		t.Fatalf("bütçe sayımı başarısızken kategori silindi")
+		t.Fatalf("the category was deleted even though the budget count failed")
 	}
 }

@@ -34,10 +34,10 @@ func TestCreateCategory_Success(t *testing.T) {
 	w := performRequest(r, "POST", "/categories", `{"name":"Maas","type":"income"}`)
 
 	if w.Code != http.StatusCreated {
-		t.Fatalf("beklenen 201, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 201, got %d (body: %s)", w.Code, w.Body.String())
 	}
 	if len(repo.categories) != 1 {
-		t.Fatalf("kategori oluşmadı")
+		t.Fatalf("category was not created")
 	}
 }
 
@@ -45,16 +45,16 @@ func TestCreateCategory_InvalidType(t *testing.T) {
 	repo := newFakeCategoryRepo()
 	r := setupCategoryRouter(repo, 1, models.RoleClient)
 
-	// type sadece income|expense olabilir -> binding "oneof" başarısız
+	// type may only be income|expense -> the "oneof" binding fails
 	w := performRequest(r, "POST", "/categories", `{"name":"Maas","type":"salary"}`)
 
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("beklenen 400, gelen %d", w.Code)
+		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 
-// Kullanıcı hem global (user_id NULL) hem kendi kategorilerini görmeli,
-// başkasınınkini görmemeli.
+// A user must see both global (user_id NULL) and their own categories,
+// but never another user's.
 func TestListCategories_ScopedToUser(t *testing.T) {
 	repo := newFakeCategoryRepo()
 	repo.seed(&models.Category{ID: 1, Name: "Global Gider", Type: "expense", UserID: nil})
@@ -65,19 +65,19 @@ func TestListCategories_ScopedToUser(t *testing.T) {
 	w := performRequest(r, "GET", "/categories", "")
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d", w.Code)
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
 	var got []models.Category
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("cevap parse edilemedi: %v", err)
+		t.Fatalf("response could not be parsed: %v", err)
 	}
 	if len(got) != 2 {
-		t.Fatalf("2 kategori bekleniyordu (global + kendi), gelen %d: %s", len(got), w.Body.String())
+		t.Fatalf("expected 2 categories (global + own), got %d: %s", len(got), w.Body.String())
 	}
 	for _, cat := range got {
 		if cat.Name == "Baskasinin" {
-			t.Fatalf("başka kullanıcının kategorisi sızdı")
+			t.Fatalf("another user's category leaked")
 		}
 	}
 }
@@ -90,14 +90,14 @@ func TestUpdateCategory_OwnCategory(t *testing.T) {
 	w := performRequest(r, "PUT", "/categories/1", `{"name":"Yeni","type":"expense"}`)
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d", w.Code)
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	if repo.categories[1].Name != "Yeni" || repo.categories[1].Type != "expense" {
-		t.Fatalf("kategori güncellenmedi: %+v", repo.categories[1])
+		t.Fatalf("category was not updated: %+v", repo.categories[1])
 	}
 }
 
-// Global kategoriyi (user_id NULL) sadece admin değiştirebilir.
+// Only an admin may modify a global category (user_id NULL).
 func TestUpdateCategory_GlobalRequiresAdmin(t *testing.T) {
 	repo := newFakeCategoryRepo()
 	repo.seed(&models.Category{ID: 1, Name: "Global", Type: "expense", UserID: nil})
@@ -106,10 +106,10 @@ func TestUpdateCategory_GlobalRequiresAdmin(t *testing.T) {
 	w := performRequest(r, "PUT", "/categories/1", `{"name":"Denedim","type":"income"}`)
 
 	if w.Code != http.StatusForbidden {
-		t.Fatalf("client için 403 bekleniyordu, gelen %d", w.Code)
+		t.Fatalf("expected 403 for a client, got %d", w.Code)
 	}
 	if repo.categories[1].Name != "Global" {
-		t.Fatalf("client global kategoriyi değiştirdi")
+		t.Fatalf("a client modified a global category")
 	}
 }
 
@@ -121,11 +121,11 @@ func TestUpdateCategory_AdminCanUpdateGlobal(t *testing.T) {
 	w := performRequest(r, "PUT", "/categories/1", `{"name":"Guncellendi","type":"expense"}`)
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("admin için 200 bekleniyordu, gelen %d", w.Code)
+		t.Fatalf("expected 200 for admin, got %d", w.Code)
 	}
 }
 
-// Başka kullanıcının kategorisine dokunulamaz.
+// Another user's category must not be touched.
 func TestUpdateCategory_OtherUsersCategoryForbidden(t *testing.T) {
 	repo := newFakeCategoryRepo()
 	repo.seed(&models.Category{ID: 1, Name: "Baskasinin", Type: "income", UserID: intPtr(2)})
@@ -134,7 +134,7 @@ func TestUpdateCategory_OtherUsersCategoryForbidden(t *testing.T) {
 	w := performRequest(r, "PUT", "/categories/1", `{"name":"Hack","type":"income"}`)
 
 	if w.Code != http.StatusForbidden {
-		t.Fatalf("beklenen 403, gelen %d", w.Code)
+		t.Fatalf("expected 403, got %d", w.Code)
 	}
 }
 
@@ -146,14 +146,14 @@ func TestDeleteCategory_Success(t *testing.T) {
 	w := performRequest(r, "DELETE", "/categories/1", "")
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d", w.Code)
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	if len(repo.categories) != 0 {
-		t.Fatalf("kategori silinmedi")
+		t.Fatalf("category was not deleted")
 	}
 }
 
-// Bir transaction tarafından kullanılan kategori silinemez -> 409 Conflict.
+// A category referenced by a transaction cannot be deleted -> 409 Conflict.
 func TestDeleteCategory_InUseReturnsConflict(t *testing.T) {
 	repo := newFakeCategoryRepo()
 	repo.seed(&models.Category{ID: 1, Name: "Kullanimda", Type: "income", UserID: intPtr(1)})
@@ -163,7 +163,7 @@ func TestDeleteCategory_InUseReturnsConflict(t *testing.T) {
 	w := performRequest(r, "DELETE", "/categories/1", "")
 
 	if w.Code != http.StatusConflict {
-		t.Fatalf("beklenen 409, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 409, got %d (body: %s)", w.Code, w.Body.String())
 	}
 }
 
@@ -174,11 +174,11 @@ func TestDeleteCategory_NotFound(t *testing.T) {
 	w := performRequest(r, "DELETE", "/categories/999", "")
 
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("beklenen 404, gelen %d", w.Code)
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
 
-// GÜVENLİK/BÜTÇE: bir bütçe tarafından kullanılan kategori silinemez.
+// SECURITY/BUDGET: a category referenced by a budget cannot be deleted.
 func TestDeleteCategory_UsedByBudgetReturnsConflict(t *testing.T) {
 	repo := newFakeCategoryRepo()
 	repo.seed(&models.Category{ID: 3, Name: "Market", Type: "expense", UserID: intPtr(1)})
@@ -190,14 +190,15 @@ func TestDeleteCategory_UsedByBudgetReturnsConflict(t *testing.T) {
 	w := performRequest(r, "DELETE", "/categories/3", "")
 
 	if w.Code != http.StatusConflict {
-		t.Fatalf("beklenen 409, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 409, got %d (body: %s)", w.Code, w.Body.String())
 	}
 	if _, ok := repo.categories[3]; !ok {
-		t.Fatalf("bütçede kullanılan kategori silindi")
+		t.Fatalf("a category referenced by a budget was deleted")
 	}
 }
 
-// Regresyon: bütçe bağımlılığı eklendikten sonra normal silme hâlâ çalışmalı.
+// Regression: ordinary deletion must still work after the budget dependency
+// check was introduced.
 func TestDeleteCategory_NotUsedByBudgetSucceeds(t *testing.T) {
 	repo := newFakeCategoryRepo()
 	repo.seed(&models.Category{ID: 3, Name: "Market", Type: "expense", UserID: intPtr(1)})
@@ -207,9 +208,9 @@ func TestDeleteCategory_NotUsedByBudgetSucceeds(t *testing.T) {
 	w := performRequest(r, "DELETE", "/categories/3", "")
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
 	}
 	if _, ok := repo.categories[3]; ok {
-		t.Fatalf("kategori silinmedi")
+		t.Fatalf("category was not deleted")
 	}
 }

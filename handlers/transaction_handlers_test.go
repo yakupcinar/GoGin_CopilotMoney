@@ -32,32 +32,32 @@ func TestCreateTransaction_Success(t *testing.T) {
 	w := performRequest(r, "POST", "/transactions", body)
 
 	if w.Code != http.StatusCreated {
-		t.Fatalf("beklenen 201, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 201, got %d (body: %s)", w.Code, w.Body.String())
 	}
 	if len(txRepo.transactions) != 1 {
-		t.Fatalf("transaction oluşmadı")
+		t.Fatalf("transaction was not created")
 	}
 	if txRepo.transactions[1].Amount != 150.50 {
-		t.Fatalf("tutar yanlış kaydedildi: %v", txRepo.transactions[1].Amount)
+		t.Fatalf("amount was stored incorrectly: %v", txRepo.transactions[1].Amount)
 	}
 }
 
-// GÜVENLİK: kullanıcı, sahibi olmadığı bir hesaba transaction ekleyemez.
+// SECURITY: a user cannot add a transaction to an account they do not own.
 func TestCreateTransaction_ForeignAccountRejected(t *testing.T) {
 	accRepo := newFakeAccountRepo()
 	accRepo.seed(&models.Account{ID: 1, Name: "User1 Hesap", UserID: 1})
 	txRepo := newFakeTransactionRepo()
 
-	// user 2, user 1'in hesabına işlem eklemeye çalışıyor
+	// user 2 attempts to add a transaction to user 1's account
 	r := setupTransactionRouter(txRepo, accRepo, 2, models.RoleClient)
 	body := `{"account_id":1,"category_id":1,"amount":100,"type":"expense","transaction_date":"2026-07-13T00:00:00Z"}`
 	w := performRequest(r, "POST", "/transactions", body)
 
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("beklenen 404, gelen %d", w.Code)
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 	if len(txRepo.transactions) != 0 {
-		t.Fatalf("başka kullanıcının hesabına transaction eklendi")
+		t.Fatalf("a transaction was added to another user's account")
 	}
 }
 
@@ -67,12 +67,12 @@ func TestCreateTransaction_NegativeAmountRejected(t *testing.T) {
 	txRepo := newFakeTransactionRepo()
 	r := setupTransactionRouter(txRepo, accRepo, 1, models.RoleClient)
 
-	// amount binding'i "gt=0" -> negatif değer 400 vermeli
+	// the amount binding is "gt=0" -> a negative value must yield 400
 	body := `{"account_id":1,"category_id":1,"amount":-50,"type":"income","transaction_date":"2026-07-13T00:00:00Z"}`
 	w := performRequest(r, "POST", "/transactions", body)
 
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("beklenen 400, gelen %d", w.Code)
+		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 
@@ -86,11 +86,11 @@ func TestGetTransaction_OwnerCanRead(t *testing.T) {
 	w := performRequest(r, "GET", "/transactions/1", "")
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d", w.Code)
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 }
 
-// GÜVENLİK: transaction başka kullanıcının hesabına aitse okunamaz.
+// SECURITY: a transaction cannot be read if it belongs to another user's account.
 func TestGetTransaction_OwnershipIsolation(t *testing.T) {
 	accRepo := newFakeAccountRepo()
 	accRepo.seed(&models.Account{ID: 1, Name: "User1 Hesap", UserID: 1})
@@ -101,7 +101,7 @@ func TestGetTransaction_OwnershipIsolation(t *testing.T) {
 	w := performRequest(r, "GET", "/transactions/1", "")
 
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("beklenen 404, gelen %d", w.Code)
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
 
@@ -118,7 +118,7 @@ func TestListAccountTransactions_OnlyThatAccount(t *testing.T) {
 	w := performRequest(r, "GET", "/accounts/1/transactions", "")
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d", w.Code)
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	var got struct {
 		Transactions []models.Transaction `json:"transactions"`
@@ -135,8 +135,9 @@ func TestListAccountTransactions_OnlyThatAccount(t *testing.T) {
 	}
 }
 
-// Sayfalama: page_size=1 iken sadece 1 kayıt dönmeli ama total gerçek sayıyı
-// göstermeli — istemci "başka sayfa var mı" bunu karşılaştırarak anlar.
+// Pagination: with page_size=1 only 1 record must be returned, but total must
+// still reflect the real count — the client compares the two to know whether
+// more pages exist.
 func TestListAccountTransactions_Pagination(t *testing.T) {
 	accRepo := newFakeAccountRepo()
 	accRepo.seed(&models.Account{ID: 1, Name: "Hesap1", UserID: 1})
@@ -176,7 +177,7 @@ func TestListAccountTransactions_OwnershipIsolation(t *testing.T) {
 	w := performRequest(r, "GET", "/accounts/1/transactions", "")
 
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("beklenen 404, gelen %d", w.Code)
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
 
@@ -191,10 +192,10 @@ func TestUpdateTransaction_Success(t *testing.T) {
 	w := performRequest(r, "PUT", "/transactions/1", body)
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
 	}
 	if txRepo.transactions[1].Amount != 99.9 || txRepo.transactions[1].Type != "expense" {
-		t.Fatalf("transaction güncellenmedi: %+v", txRepo.transactions[1])
+		t.Fatalf("transaction was not updated: %+v", txRepo.transactions[1])
 	}
 }
 
@@ -209,10 +210,10 @@ func TestUpdateTransaction_OwnershipIsolation(t *testing.T) {
 	w := performRequest(r, "PUT", "/transactions/1", body)
 
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("beklenen 404, gelen %d", w.Code)
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 	if txRepo.transactions[1].Amount != 10 {
-		t.Fatalf("başka kullanıcı transaction'ı değiştirdi")
+		t.Fatalf("another user modified the transaction")
 	}
 }
 
@@ -226,10 +227,10 @@ func TestDeleteTransaction_Success(t *testing.T) {
 	w := performRequest(r, "DELETE", "/transactions/1", "")
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d", w.Code)
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	if len(txRepo.transactions) != 0 {
-		t.Fatalf("transaction silinmedi")
+		t.Fatalf("transaction was not deleted")
 	}
 }
 
@@ -243,14 +244,14 @@ func TestDeleteTransaction_OwnershipIsolation(t *testing.T) {
 	w := performRequest(r, "DELETE", "/transactions/1", "")
 
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("beklenen 404, gelen %d", w.Code)
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 	if len(txRepo.transactions) != 1 {
-		t.Fatalf("başka kullanıcı transaction'ı sildi")
+		t.Fatalf("another user deleted the transaction")
 	}
 }
 
-// Admin başka kullanıcının işlemini de görebilmeli.
+// An admin must be able to read another user's transaction as well.
 func TestGetTransaction_AdminCanReadAny(t *testing.T) {
 	accRepo := newFakeAccountRepo()
 	accRepo.seed(&models.Account{ID: 1, Name: "User1 Hesap", UserID: 1})
@@ -261,6 +262,6 @@ func TestGetTransaction_AdminCanReadAny(t *testing.T) {
 	w := performRequest(r, "GET", "/transactions/1", "")
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("admin için 200 bekleniyordu, gelen %d", w.Code)
+		t.Fatalf("expected 200 for admin, got %d", w.Code)
 	}
 }

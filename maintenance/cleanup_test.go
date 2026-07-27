@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// Bu paketin sahte depoları: yalnızca DeleteExpired'ı anlamlı biçimde
-// uyguluyor, geri kalanı testte kullanılmadığı için boş.
+// The fake repositories for this package: only DeleteExpired is implemented
+// meaningfully; the rest are empty because the tests never call them.
 
 type fakeTokens struct {
 	deleted int64
@@ -64,38 +64,38 @@ func TestRunOnce_CleansAllThreeTables(t *testing.T) {
 	rep := NewCleaner(tokens, pending, refresh, time.Hour).RunOnce(context.Background(), time.Now())
 
 	if rep.RevokedTokens != 3 || rep.PendingActions != 5 || rep.RefreshTokens != 7 {
-		t.Fatalf("beklenen 3/5/7, gelen %d/%d/%d",
+		t.Fatalf("expected 3/5/7, got %d/%d/%d",
 			rep.RevokedTokens, rep.PendingActions, rep.RefreshTokens)
 	}
 	if rep.Total() != 15 {
-		t.Fatalf("toplam 15 bekleniyordu, gelen %d", rep.Total())
+		t.Fatalf("expected a total of 15, got %d", rep.Total())
 	}
 }
 
-// Bir tablo hata verirse diğerleri temizlenmeye DEVAM etmeli.
-// Bakım işi kısmi başarıyla da değerlidir; ilk hatada durmak,
-// çalışabilecek iki temizliği de boşa çıkarır.
+// If one table fails the others must STILL be cleaned. A maintenance job is
+// valuable even with partial success; stopping at the first error would
+// waste two cleanups that could have run.
 func TestRunOnce_ContinuesAfterError(t *testing.T) {
-	tokens := &fakeTokens{err: errors.New("db patladı")}
+	tokens := &fakeTokens{err: errors.New("db blew up")}
 	pending := &fakePending{deleted: 4}
 	refresh := &fakeRefresh{deleted: 6}
 
 	rep := NewCleaner(tokens, pending, refresh, time.Hour).RunOnce(context.Background(), time.Now())
 
 	if pending.calls != 1 || refresh.calls != 1 {
-		t.Fatalf("hata sonrası diğer tablolar denenmedi (pending=%d refresh=%d)",
+		t.Fatalf("the other tables were not attempted after the error (pending=%d refresh=%d)",
 			pending.calls, refresh.calls)
 	}
 	if rep.RevokedTokens != 0 {
-		t.Fatalf("hatalı tablo için 0 bekleniyordu, gelen %d", rep.RevokedTokens)
+		t.Fatalf("expected 0 for the failing table, got %d", rep.RevokedTokens)
 	}
 	if rep.Total() != 10 {
-		t.Fatalf("diğer ikisinden 10 bekleniyordu, gelen %d", rep.Total())
+		t.Fatalf("expected 10 from the other two, got %d", rep.Total())
 	}
 }
 
-// Start hemen bir tur çalıştırmalı: sunucu kapalıyken biriken kayıtlar
-// ilk tick'i (varsayılan 1 saat) beklememeli.
+// Start must run one pass immediately: records accumulated while the server
+// was down should not wait for the first tick (1 hour by default).
 func TestStart_RunsImmediatelyAndStopsOnCancel(t *testing.T) {
 	tokens := &fakeTokens{}
 	pending := &fakePending{}
@@ -109,31 +109,31 @@ func TestStart_RunsImmediatelyAndStopsOnCancel(t *testing.T) {
 		close(done)
 	}()
 
-	// İlk turun çalışmasını bekle.
+	// Wait for the first pass to run.
 	deadline := time.After(2 * time.Second)
 	for tokens.calls == 0 {
 		select {
 		case <-deadline:
-			t.Fatal("Start başlangıçta temizlik yapmadı")
+			t.Fatal("Start did not run a cleanup at startup")
 		default:
 			time.Sleep(5 * time.Millisecond)
 		}
 	}
 
-	// İptal edilince ticker'ı beklemeden çıkmalı.
+	// On cancellation it must exit without waiting for the ticker.
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Start context iptalinde durmadı")
+		t.Fatal("Start did not stop on context cancellation")
 	}
 }
 
-// interval <= 0 verilirse makul bir varsayılana düşmeli;
-// aksi halde time.NewTicker panic atar.
+// If interval <= 0 is given it must fall back to a sensible default;
+// otherwise time.NewTicker panics.
 func TestNewCleaner_RejectsNonPositiveInterval(t *testing.T) {
 	c := NewCleaner(&fakeTokens{}, &fakePending{}, &fakeRefresh{}, 0)
 	if c.interval != DefaultInterval {
-		t.Fatalf("varsayılan aralık bekleniyordu, gelen %v", c.interval)
+		t.Fatalf("expected the default interval, got %v", c.interval)
 	}
 }

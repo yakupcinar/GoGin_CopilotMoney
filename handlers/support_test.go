@@ -1,16 +1,17 @@
 package handlers
 
-// Bu dosya testlerde kullanılan "sahte" (fake) repository'leri ve yardımcı
-// fonksiyonları içerir. Gerçek veritabanı yerine bellekteki map'ler kullanılır;
-// böylece testler Postgres'e ihtiyaç duymaz, milisaniyeler içinde çalışır.
+// This file holds the fake repositories and helper functions used by the
+// tests. In-memory maps stand in for a real database, so the tests need no
+// Postgres and run in milliseconds.
 //
-// Her fake, gerçek repository interface'ini karşılar. Aşağıdaki derleme-zamanı
-// kontrolleri bunu garanti eder: eğer bir fake interface'i tam karşılamıyorsa
-// proje derlenmez.
+// Every fake satisfies the real repository interface. The compile-time
+// assertions below guarantee it: if a fake stops matching its interface the
+// project no longer builds.
 //
-// Fake'ler ayrıca hata enjeksiyonu destekler: repo.failOn("GetByID", errBoom)
-// dedikten sonra o metod her çağrıldığında verilen hatayı döner. Böylece
-// "veritabanı patlarsa handler ne yapıyor?" (500 yolları) test edilebilir.
+// The fakes also support error injection: after repo.failOn("GetByID",
+// errBoom), that method returns the given error on every call. This makes
+// "what does the handler do when the database blows up?" (the 500 paths)
+// testable.
 
 import (
 	"GoGinMoneyCopilot/ai"
@@ -38,16 +39,17 @@ var (
 	_ ai.ActionParser                      = (*fakeActionParser)(nil)
 )
 
-// errBoom, testlerde "beklenmeyen altyapı hatası"nı temsil eder.
-// Handler'ın bunu bilinen domain hatalarından (ErrAccountNotFound gibi)
-// ayırıp 500 döndürmesi beklenir.
+// errBoom represents an "unexpected infrastructure failure" in the tests.
+// The handler is expected to distinguish it from known domain errors (such
+// as ErrAccountNotFound) and return 500.
 var errBoom = errors.New("veritabanı bağlantısı koptu")
 
-// ---- hata enjeksiyonu ----
+// ---- error injection ----
 
-// errInjector, fake repo'lara gömülerek (embed) onlara failOn/injected
-// yeteneğini kazandırır. Go'da struct gömme (composition) böyle çalışır:
-// gömülen tipin metodları, gömen tipin metodlarıymış gibi çağrılabilir.
+// errInjector is embedded into the fake repos to give them the
+// failOn/injected capability. This is how struct embedding (composition)
+// works in Go: the embedded type's methods can be called as if they were
+// the outer type's own.
 type errInjector struct {
 	errs map[string]error
 }
@@ -56,12 +58,12 @@ func newErrInjector() errInjector {
 	return errInjector{errs: map[string]error{}}
 }
 
-// failOn: verilen metod adı çağrıldığında err dönsün.
+// failOn: make the named method return err when called.
 func (e *errInjector) failOn(method string, err error) {
 	e.errs[method] = err
 }
 
-// injected: bu metod için enjekte edilmiş hata varsa döner, yoksa nil.
+// injected: returns the error injected for this method, or nil if none.
 func (e *errInjector) injected(method string) error {
 	return e.errs[method]
 }
@@ -71,8 +73,8 @@ func (e *errInjector) injected(method string) error {
 type fakeAccountRepo struct {
 	errInjector
 	accounts map[int]*models.Account
-	// inUse: silinince ErrAccountInUse dönmesi için işaretli id'ler
-	// (gerçek repo'da bunu foreign key kısıtı yapar)
+	// inUse: ids flagged so that deletion returns ErrAccountInUse
+	// (in the real repo a foreign-key constraint does this)
 	inUse  map[int]bool
 	nextID int
 }
@@ -169,7 +171,7 @@ func (r *fakeAccountRepo) Delete(ctx context.Context, accountID int) error {
 type fakeCategoryRepo struct {
 	errInjector
 	categories map[int]*models.Category
-	inUse      map[int]bool // silinince ErrCategoryInUse dönmesi için işaretli id'ler
+	inUse      map[int]bool // ids flagged so that deletion returns ErrCategoryInUse
 	nextID     int
 }
 
@@ -316,8 +318,8 @@ func (r *fakeTransactionRepo) ListByAccount(ctx context.Context, accountID int) 
 	return out, nil
 }
 
-// ListByAccountPaged — gerçek repo gibi transaction_date DESC sıralar,
-// sonra sayfayı dilimler. Toplam sayı, sayfalamadan ÖNCEKİ tam kümeden gelir.
+// ListByAccountPaged — orders by transaction_date DESC like the real repo,
+// then slices the page. The total comes from the full set BEFORE paging.
 func (r *fakeTransactionRepo) ListByAccountPaged(ctx context.Context, accountID, page, pageSize int) ([]models.Transaction, int64, error) {
 	if err := r.injected("ListByAccountPaged"); err != nil {
 		return nil, 0, err
@@ -370,9 +372,9 @@ func (r *fakeTransactionRepo) CountByAccount(ctx context.Context, accountID int)
 	return n, nil
 }
 
-// SumExpenseByCategory — gerçek SQL'in mantığını BİREBİR yansıtır: sadece
-// expense, sadece verilen hesaplar, yarı açık [from, to) aralığı. Aksi halde
-// sınır testleri sorguyu değil sahteyi test etmiş olur.
+// SumExpenseByCategory — mirrors the real SQL EXACTLY: expense only, the
+// given accounts only, half-open [from, to) range. Otherwise the boundary
+// tests would be testing the fake rather than the query.
 func (r *fakeTransactionRepo) SumExpenseByCategory(ctx context.Context, accountIDs []int, from, to time.Time) (map[int]float64, error) {
 	if err := r.injected("SumExpenseByCategory"); err != nil {
 		return nil, err
@@ -441,7 +443,7 @@ func newFakeUserRepo() *fakeUserRepo {
 	}
 }
 
-// seedUser doğrudan bir kullanıcı ekler (login testlerinde hazır hash ile kullanmak için).
+// seedUser inserts a user directly (for login tests that need a ready hash).
 func (r *fakeUserRepo) seedUser(username, passwordHash string, role models.Role) *models.User {
 	u := &models.User{ID: r.nextID, Username: username, PasswordHash: passwordHash, Role: role}
 	r.users[username] = u
@@ -525,11 +527,11 @@ func (r *fakeTokenRepo) IsRevoked(ctx context.Context, jti string) (bool, error)
 	return r.revoked[jti], nil
 }
 
-// ---- test yardımcıları ----
+// ---- test helpers ----
 
-// authAs, gerçek AuthMiddleware'in context'e koyduğu değerleri taklit eder.
-// Böylece handler testleri JWT üretmeden, doğrudan "giriş yapmış kullanıcı"
-// senaryosunu kurabilir.
+// authAs mimics the values the real AuthMiddleware places in the context, so
+// handler tests can set up an "authenticated user" scenario directly without
+// generating a JWT.
 func authAs(userID int, role models.Role) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Set("user_id", userID)
@@ -550,8 +552,8 @@ func performRequest(r *gin.Engine, method, path, body string) *httptest.Response
 
 // ---- fakeRefreshRepo ----
 //
-// Gerçek repo'nun ATOMİK Consume davranışını taklit eder: bir token yalnızca
-// bir kez tüketilebilir, ikinci deneme ErrRefreshTokenReused döner.
+// Mimics the real repo's ATOMIC Consume behaviour: a token can be consumed
+// only once; a second attempt returns ErrRefreshTokenReused.
 
 type fakeRefreshRepo struct {
 	errInjector
@@ -587,7 +589,7 @@ func (r *fakeRefreshRepo) Consume(ctx context.Context, tokenHash string, now tim
 		return nil, repositories.ErrRefreshTokenInvalid
 	}
 	if t.UsedAt != nil {
-		// Sızıntı: kaydı DA döndür ki çağıran tüm oturumları iptal edebilsin.
+		// Leak: return the record TOO so the caller can revoke all sessions.
 		return t, repositories.ErrRefreshTokenReused
 	}
 	if t.RevokedAt != nil || !now.Before(t.ExpiresAt) {
@@ -635,9 +637,9 @@ func (r *fakeRefreshRepo) DeleteExpired(ctx context.Context, before time.Time) (
 
 // ---- fakePendingRepo ----
 //
-// Gerçek repo'nun ATOMİK Claim davranışını taklit eder: token tek kullanımlık,
-// süreli ve kullanıcıya bağlı. Dört red sebebi de AYNI hatayı döner —
-// gerçekte olduğu gibi (bilgi sızıntısını önlemek için).
+// Mimics the real repo's ATOMIC Claim behaviour: the token is single-use,
+// time-bound and tied to a user. All four rejection reasons return the SAME
+// error — exactly as in production, to prevent information leakage.
 
 type fakePendingRepo struct {
 	errInjector
@@ -688,11 +690,11 @@ func (r *fakePendingRepo) DeleteExpired(ctx context.Context, before time.Time) (
 
 // ---- fakeActionParser ----
 //
-// AI'ı taklit eder. Testler modelin NE döndürdüğünü tam olarak kontrol eder;
-// gerçek API çağrısı yok, para harcanmaz, sonuç deterministiktir.
+// Stands in for the AI. The tests control EXACTLY what the model returns;
+// there is no real API call, no money spent, and the result is deterministic.
 //
-// Bu, "modelin uydurduğu çıktıya karşı savunmalarımız çalışıyor mu"
-// sorusunu test edilebilir kılan şey.
+// This is what makes "do our defences against fabricated model output
+// actually work?" a testable question.
 
 type fakeActionParser struct {
 	actions []models.ParsedAction
@@ -710,8 +712,8 @@ func (p *fakeActionParser) Parse(_ context.Context, _ ai.ParseInput) ([]models.P
 
 // ---- fakeBudgetRepo ----
 //
-// Gerçek repo'nun davranışını yansıtır: kullanıcı başına tek bütçe, başlık ve
-// satırlar birlikte yaşar, Replace tam değiştirmedir.
+// Mirrors the real repo's behaviour: one budget per user, header and lines
+// live together, and Replace is a full replacement.
 
 type fakeBudgetRepo struct {
 	errInjector

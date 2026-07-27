@@ -10,58 +10,59 @@ import (
 )
 
 func TestRateLimiter_BlocksAfterBurst(t *testing.T) {
-	// Dakikada 60 (saniyede 1), patlama payı 3.
+	// 60 per minute (1 per second), burst allowance of 3.
 	rl := NewRateLimiter(60, 3)
 
 	for i := 1; i <= 3; i++ {
 		if !rl.Allow("ip:1.2.3.4") {
-			t.Fatalf("%d. istek burst içindeyken reddedildi", i)
+			t.Fatalf("request %d was rejected while still within the burst", i)
 		}
 	}
 	if rl.Allow("ip:1.2.3.4") {
-		t.Fatal("burst tükendikten sonra istek geçti")
+		t.Fatal("a request passed after the burst was exhausted")
 	}
 }
 
-// Anahtarlar birbirini etkilememeli: bir kullanıcının limiti dolunca
-// diğerleri engellenmemeli.
+// Keys must not affect each other: one user hitting their limit must not
+// block the others.
 func TestRateLimiter_KeysAreIndependent(t *testing.T) {
 	rl := NewRateLimiter(60, 1)
 
 	if !rl.Allow("user:1") {
-		t.Fatal("ilk kullanıcı engellendi")
+		t.Fatal("the first user was blocked")
 	}
 	if rl.Allow("user:1") {
-		t.Fatal("aynı kullanıcı ikinci kez geçti")
+		t.Fatal("the same user passed a second time")
 	}
 	if !rl.Allow("user:2") {
-		t.Fatal("FARKLI kullanıcı, birincinin limiti yüzünden engellendi")
+		t.Fatal("a DIFFERENT user was blocked because of the first user's limit")
 	}
 }
 
-// Sweep olmadan map her yeni IP ile büyür — bellek tüketme saldırısına açık.
+// Without Sweep the map grows with every new IP — open to a memory
+// exhaustion attack.
 func TestRateLimiter_SweepEvictsStaleKeys(t *testing.T) {
 	rl := NewRateLimiter(60, 1)
 	rl.ttl = 50 * time.Millisecond
 
 	rl.Allow("ip:eski")
 	if len(rl.visitors) != 1 {
-		t.Fatalf("1 kayıt bekleniyordu, gelen %d", len(rl.visitors))
+		t.Fatalf("expected 1 entry, got %d", len(rl.visitors))
 	}
 
 	removed := rl.Sweep(time.Now().Add(time.Second))
 	if removed != 1 || len(rl.visitors) != 0 {
-		t.Fatalf("eski kayıt silinmedi (silinen=%d kalan=%d)", removed, len(rl.visitors))
+		t.Fatalf("the stale entry was not evicted (removed=%d remaining=%d)", removed, len(rl.visitors))
 	}
 }
 
-// Taze anahtar silinmemeli.
+// A fresh key must not be evicted.
 func TestRateLimiter_SweepKeepsFreshKeys(t *testing.T) {
 	rl := NewRateLimiter(60, 1)
 
 	rl.Allow("ip:taze")
 	if removed := rl.Sweep(time.Now()); removed != 0 {
-		t.Fatalf("taze anahtar silindi (%d)", removed)
+		t.Fatalf("a fresh key was evicted (%d)", removed)
 	}
 }
 
@@ -77,22 +78,22 @@ func TestLimit_Returns429WithRetryAfter(t *testing.T) {
 	first := httptest.NewRecorder()
 	r.ServeHTTP(first, httptest.NewRequest("GET", "/x", nil))
 	if first.Code != http.StatusOK {
-		t.Fatalf("ilk istek %d döndü", first.Code)
+		t.Fatalf("the first request returned %d", first.Code)
 	}
 
 	second := httptest.NewRecorder()
 	r.ServeHTTP(second, httptest.NewRequest("GET", "/x", nil))
 	if second.Code != http.StatusTooManyRequests {
-		t.Fatalf("beklenen 429, gelen %d", second.Code)
+		t.Fatalf("expected 429, got %d", second.Code)
 	}
-	// Retry-After olmadan istemciler agresif yeniden dener, durumu kötüleştirir.
+	// Without Retry-After clients retry aggressively and make things worse.
 	if second.Header().Get("Retry-After") == "" {
-		t.Fatal("Retry-After başlığı yok")
+		t.Fatal("the Retry-After header is missing")
 	}
 }
 
-// KeyByUser context'teki user_id'yi kullanmalı — aynı IP'deki farklı
-// kullanıcılar birbirini engellemesin.
+// KeyByUser must use the user_id from the context — different users behind
+// the same IP must not block each other.
 func TestKeyByUser_UsesUserIDNotIP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -101,11 +102,12 @@ func TestKeyByUser_UsesUserIDNotIP(t *testing.T) {
 	c.Set("user_id", 42)
 
 	if got := KeyByUser(c); got != "user:42" {
-		t.Fatalf("beklenen user:42, gelen %q", got)
+		t.Fatalf("expected user:42, got %q", got)
 	}
 }
 
-// user_id yoksa (middleware sırası yanlışsa) IP'ye düşmeli — açık kalmamalı.
+// If user_id is absent (wrong middleware order) it must fall back to the IP
+// rather than leaving the endpoint unprotected.
 func TestKeyByUser_FallsBackToIP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -113,14 +115,15 @@ func TestKeyByUser_FallsBackToIP(t *testing.T) {
 	c.Request = httptest.NewRequest("GET", "/", nil)
 
 	if got := KeyByUser(c); got[:3] != "ip:" {
-		t.Fatalf("IP'ye düşmesi bekleniyordu, gelen %q", got)
+		t.Fatalf("expected a fallback to the IP, got %q", got)
 	}
 }
 
-// Geçersiz yapılandırma panic'e yol açmamalı (rate.NewLimiter 0 ile sorunlu).
+// Invalid configuration must not cause a panic (rate.NewLimiter misbehaves
+// with 0).
 func TestNewRateLimiter_RejectsNonPositive(t *testing.T) {
 	rl := NewRateLimiter(0, 0)
 	if !rl.Allow("k") {
-		t.Fatal("varsayılana düşmeliydi, ilk istek reddedildi")
+		t.Fatal("expected a fallback to the default; the first request was rejected")
 	}
 }
