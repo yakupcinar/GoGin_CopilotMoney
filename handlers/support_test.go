@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -313,6 +314,34 @@ func (r *fakeTransactionRepo) ListByAccount(ctx context.Context, accountID int) 
 		}
 	}
 	return out, nil
+}
+
+// ListByAccountPaged — gerçek repo gibi transaction_date DESC sıralar,
+// sonra sayfayı dilimler. Toplam sayı, sayfalamadan ÖNCEKİ tam kümeden gelir.
+func (r *fakeTransactionRepo) ListByAccountPaged(ctx context.Context, accountID, page, pageSize int) ([]models.Transaction, int64, error) {
+	if err := r.injected("ListByAccountPaged"); err != nil {
+		return nil, 0, err
+	}
+	var all []models.Transaction
+	for _, tx := range r.transactions {
+		if tx.AccountID == accountID {
+			all = append(all, *tx)
+		}
+	}
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].TransactionDate.After(all[j].TransactionDate)
+	})
+
+	total := int64(len(all))
+	start := (page - 1) * pageSize
+	if start >= len(all) {
+		return []models.Transaction{}, total, nil
+	}
+	end := start + pageSize
+	if end > len(all) {
+		end = len(all)
+	}
+	return all[start:end], total, nil
 }
 
 func (r *fakeTransactionRepo) CountByCategory(ctx context.Context, categoryID int) (int64, error) {

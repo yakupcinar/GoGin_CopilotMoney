@@ -71,6 +71,10 @@ func (h *TransactionHandler) GetTransaction(c *gin.Context) {
 	c.JSON(http.StatusOK, tx)
 }
 
+// ListAccountTransactions — GET /accounts/:id/transactions?page=1&page_size=20
+//
+// page/page_size verilmezse varsayılana düşer. pageSize üst sınırı (100),
+// istemcinin ?page_size=999999 ile tüm tabloyu tek seferde çekmesini engeller.
 func (h *TransactionHandler) ListAccountTransactions(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -87,12 +91,26 @@ func (h *TransactionHandler) ListAccountTransactions(c *gin.Context) {
 		return
 	}
 
-	transactions, err := h.transactions.ListByAccount(c.Request.Context(), id)
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	transactions, total, err := h.transactions.ListByAccountPaged(c.Request.Context(), id, page, pageSize)
 	if err != nil {
 		respondInternalError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, transactions)
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": transactions,
+		"page":         page,
+		"page_size":    pageSize,
+		"total":        total,
+	})
 }
 
 func (h *TransactionHandler) UpdateTransaction(c *gin.Context) {

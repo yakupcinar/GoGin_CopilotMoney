@@ -193,7 +193,7 @@ func TestListAccountTransactions_RepoErrorReturns500(t *testing.T) {
 	accRepo := newFakeAccountRepo()
 	accRepo.seed(&models.Account{ID: 1, Name: "Hesap", UserID: 1})
 	txRepo := newFakeTransactionRepo()
-	txRepo.failOn("ListByAccount", errBoom)
+	txRepo.failOn("ListByAccountPaged", errBoom)
 	r := setupTransactionRouter(txRepo, accRepo, 1, models.RoleClient)
 
 	w := performRequest(r, "GET", "/accounts/1/transactions", "")

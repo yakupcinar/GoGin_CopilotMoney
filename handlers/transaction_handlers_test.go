@@ -120,12 +120,49 @@ func TestListAccountTransactions_OnlyThatAccount(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("beklenen 200, gelen %d", w.Code)
 	}
-	var got []models.Transaction
+	var got struct {
+		Transactions []models.Transaction `json:"transactions"`
+		Total        int64                `json:"total"`
+	}
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("cevap parse edilemedi: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("hesap 1 için 2 işlem bekleniyordu, gelen %d", len(got))
+	if len(got.Transactions) != 2 {
+		t.Fatalf("hesap 1 için 2 işlem bekleniyordu, gelen %d", len(got.Transactions))
+	}
+	if got.Total != 2 {
+		t.Fatalf("toplam 2 bekleniyordu, gelen %d", got.Total)
+	}
+}
+
+// Sayfalama: page_size=1 iken sadece 1 kayıt dönmeli ama total gerçek sayıyı
+// göstermeli — istemci "başka sayfa var mı" bunu karşılaştırarak anlar.
+func TestListAccountTransactions_Pagination(t *testing.T) {
+	accRepo := newFakeAccountRepo()
+	accRepo.seed(&models.Account{ID: 1, Name: "Hesap1", UserID: 1})
+	txRepo := newFakeTransactionRepo()
+	txRepo.seed(&models.Transaction{ID: 1, AccountID: 1, Amount: 10, Type: "income", TransactionDate: time.Now()})
+	txRepo.seed(&models.Transaction{ID: 2, AccountID: 1, Amount: 20, Type: "expense", TransactionDate: time.Now()})
+
+	r := setupTransactionRouter(txRepo, accRepo, 1, models.RoleClient)
+	w := performRequest(r, "GET", "/accounts/1/transactions?page=1&page_size=1", "")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("beklenen 200, gelen %d", w.Code)
+	}
+	var got struct {
+		Transactions []models.Transaction `json:"transactions"`
+		Total        int64                `json:"total"`
+		PageSize     int                  `json:"page_size"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("cevap parse edilemedi: %v", err)
+	}
+	if len(got.Transactions) != 1 {
+		t.Fatalf("page_size=1 ile 1 işlem bekleniyordu, gelen %d", len(got.Transactions))
+	}
+	if got.Total != 2 {
+		t.Fatalf("total gerçek sayıyı (2) göstermeliydi, gelen %d", got.Total)
 	}
 }
 

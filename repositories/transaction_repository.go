@@ -16,6 +16,10 @@ type TransactionRepository interface {
 	Create(ctx context.Context, input models.CreateTransactionInput) error
 	GetByID(ctx context.Context, transactionID int) (*models.Transaction, error)
 	ListByAccount(ctx context.Context, accountID int) ([]models.Transaction, error)
+	// ListByAccountPaged — HTTP listeleme endpoint'i içindir. Sayfa numarası
+	// büyüdükçe OFFSET pahalılaşır; bu projenin ölçeğinde (kullanıcı başına
+	// birkaç bin işlem) sorun değil, keyset pagination gerekmez.
+	ListByAccountPaged(ctx context.Context, accountID, page, pageSize int) ([]models.Transaction, int64, error)
 	CountByCategory(ctx context.Context, categoryID int) (int64, error)
 	SumExpenseByCategory(ctx context.Context, accountIDs []int, from, to time.Time) (map[int]float64, error)
 	Update(ctx context.Context, transactionID int, input models.UpdateTransactionInput) error
@@ -62,6 +66,29 @@ func (r *gormTransactionRepository) ListByAccount(ctx context.Context, accountID
 		return nil, fmt.Errorf("Transactions couldn't be fetched: %v", err)
 	}
 	return transactions, nil
+}
+
+// ListByAccountPaged — bir sayfalık işlem + toplam kayıt sayısı.
+//
+// NEDEN AYRI METOT (ListByAccount yerine): ListByAccount, chat/ paketinde
+// "bu hesapta hiç işlem var mı?" diye silme kontrolü için TAM listeye
+// ihtiyaç duyuyor — sayfalama orada anlamsız olurdu. HTTP'deki listeleme
+// ise büyüyebilecek bir koleksiyon, o yüzden ayrı bir sözleşme.
+func (r *gormTransactionRepository) ListByAccountPaged(ctx context.Context, accountID, page, pageSize int) ([]models.Transaction, int64, error) {
+	var total int64
+	if err := r.db.WithContext(ctx).Model(&models.Transaction{}).
+		Where("account_id = ?", accountID).Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("Transaction count couldn't be fetched: %v", err)
+	}
+
+	var transactions []models.Transaction
+	if err := r.db.WithContext(ctx).Where("account_id = ?", accountID).
+		Order("transaction_date DESC").
+		Limit(pageSize).Offset((page - 1) * pageSize).
+		Find(&transactions).Error; err != nil {
+		return nil, 0, fmt.Errorf("Transactions couldn't be fetched: %v", err)
+	}
+	return transactions, total, nil
 }
 
 func (r *gormTransactionRepository) CountByCategory(ctx context.Context, categoryID int) (int64, error) {
