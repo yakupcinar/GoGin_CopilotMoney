@@ -1,6 +1,11 @@
 package middleware
 
-import "github.com/gin-gonic/gin"
+import (
+	"os"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+)
 
 // SetupTrustedProxies — ClientIP()'nin hangi kaynağa güveneceğini belirler.
 //
@@ -16,9 +21,25 @@ import "github.com/gin-gonic/gin"
 // nil = hiçbir vekile güvenme. ClientIP() başlığı yok sayar ve gerçek TCP
 // bağlantı adresini döner; istemci bunu değiştiremez.
 //
-// ÖNÜNE NGINX/ALB KOYULURSA burası değişmeli: o zaman uygulama yalnızca
-// vekilin IP'sini görür ve tüm kullanıcılar tek sayaca düşer. Yalnızca vekilin
-// ağına güvenilmeli, örn. []string{"172.16.0.0/12"} (docker ağı).
+// VEKİL ARKASINDAYKEN: TRUSTED_PROXIES ortam değişkeni (virgülle ayrılmış
+// CIDR listesi) verilir. Aksi hâlde uygulama yalnızca vekilin IP'sini görür
+// ve TÜM kullanıcılar tek sayaca düşer — limit ters yönde bozulur.
+//
+// Güvenlik, vekilin başlığı ÜZERİNE YAZMASINA dayanır. nginx.conf'ta
+// $remote_addr kullanılıyor; $proxy_add_x_forwarded_for kullanılsaydı
+// istemcinin sahte değeri listenin başında kalır ve açık geri gelirdi.
 func SetupTrustedProxies(r *gin.Engine) error {
-	return r.SetTrustedProxies(nil)
+	raw := strings.TrimSpace(os.Getenv("TRUSTED_PROXIES"))
+	if raw == "" {
+		// Vekil yok: başlığa güvenme, gerçek TCP adresini kullan.
+		return r.SetTrustedProxies(nil)
+	}
+
+	var cidrs []string
+	for _, p := range strings.Split(raw, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			cidrs = append(cidrs, p)
+		}
+	}
+	return r.SetTrustedProxies(cidrs)
 }

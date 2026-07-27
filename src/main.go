@@ -101,11 +101,26 @@ func main() {
 	// --- Rate limiting ---
 	// authLimiter : IP başına — brute-force'u pahalı kılar
 	// chatLimiter : KULLANICI başına — /chat her istekte gerçek para harcıyor
-	authLimiter := middleware.NewRateLimiter(intEnv("AUTH_RATE_PER_MIN", 10), 5)
-	chatLimiter := middleware.NewRateLimiter(intEnv("CHAT_RATE_PER_MIN", 20), 5)
+	authPerMin := intEnv("AUTH_RATE_PER_MIN", 10)
+	chatPerMin := intEnv("CHAT_RATE_PER_MIN", 20)
+
+	// Bellekteki sayaçlar HER ZAMAN kurulur: Redis varsa yedek, yoksa asıl.
+	authMem := middleware.NewRateLimiter(authPerMin, 5)
+	chatMem := middleware.NewRateLimiter(chatPerMin, 5)
 	sweeperStop := make(chan struct{})
-	go authLimiter.StartSweeper(sweeperStop)
-	go chatLimiter.StartSweeper(sweeperStop)
+	go authMem.StartSweeper(sweeperStop)
+	go chatMem.StartSweeper(sweeperStop)
+
+	// Redis varsa sayaç konteynerlerin dışına taşınır; birden fazla kopya
+	// çalıştığında limit gerçekten uygulanır. Ölçülen: Redis'siz 2 kopyada
+	// limit ~2 katına çıkıyordu.
+	var authLimiter middleware.Limiter = authMem
+	var chatLimiter middleware.Limiter = chatMem
+	if database.RDB != nil {
+		authLimiter = middleware.NewRedisLimiter(database.RDB, "auth", authPerMin, authMem)
+		chatLimiter = middleware.NewRedisLimiter(database.RDB, "chat", chatPerMin, chatMem)
+		log.Println("rate limiting: using redis (in-process counters kept as fallback)")
+	}
 
 	r := gin.New()
 

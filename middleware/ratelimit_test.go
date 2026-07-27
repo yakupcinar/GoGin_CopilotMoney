@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,11 +15,11 @@ func TestRateLimiter_BlocksAfterBurst(t *testing.T) {
 	rl := NewRateLimiter(60, 3)
 
 	for i := 1; i <= 3; i++ {
-		if !rl.Allow("ip:1.2.3.4") {
+		if !rl.Allow(context.Background(), "ip:1.2.3.4") {
 			t.Fatalf("request %d was rejected while still within the burst", i)
 		}
 	}
-	if rl.Allow("ip:1.2.3.4") {
+	if rl.Allow(context.Background(), "ip:1.2.3.4") {
 		t.Fatal("a request passed after the burst was exhausted")
 	}
 }
@@ -28,13 +29,13 @@ func TestRateLimiter_BlocksAfterBurst(t *testing.T) {
 func TestRateLimiter_KeysAreIndependent(t *testing.T) {
 	rl := NewRateLimiter(60, 1)
 
-	if !rl.Allow("user:1") {
+	if !rl.Allow(context.Background(), "user:1") {
 		t.Fatal("the first user was blocked")
 	}
-	if rl.Allow("user:1") {
+	if rl.Allow(context.Background(), "user:1") {
 		t.Fatal("the same user passed a second time")
 	}
-	if !rl.Allow("user:2") {
+	if !rl.Allow(context.Background(), "user:2") {
 		t.Fatal("a DIFFERENT user was blocked because of the first user's limit")
 	}
 }
@@ -45,7 +46,7 @@ func TestRateLimiter_SweepEvictsStaleKeys(t *testing.T) {
 	rl := NewRateLimiter(60, 1)
 	rl.ttl = 50 * time.Millisecond
 
-	rl.Allow("ip:eski")
+	rl.Allow(context.Background(), "ip:eski")
 	if len(rl.visitors) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(rl.visitors))
 	}
@@ -60,7 +61,7 @@ func TestRateLimiter_SweepEvictsStaleKeys(t *testing.T) {
 func TestRateLimiter_SweepKeepsFreshKeys(t *testing.T) {
 	rl := NewRateLimiter(60, 1)
 
-	rl.Allow("ip:taze")
+	rl.Allow(context.Background(), "ip:taze")
 	if removed := rl.Sweep(time.Now()); removed != 0 {
 		t.Fatalf("a fresh key was evicted (%d)", removed)
 	}
@@ -123,7 +124,7 @@ func TestKeyByUser_FallsBackToIP(t *testing.T) {
 // with 0).
 func TestNewRateLimiter_RejectsNonPositive(t *testing.T) {
 	rl := NewRateLimiter(0, 0)
-	if !rl.Allow("k") {
+	if !rl.Allow(context.Background(), "k") {
 		t.Fatal("expected a fallback to the default; the first request was rejected")
 	}
 }

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"sync"
@@ -34,7 +35,7 @@ import (
 // bellek implementasyonuna aittir (Redis'te TTL o işi yapar). Interface,
 // değişen davranış kadar küçük olmalı — büyüdükçe soyutlama zayıflar.
 type Limiter interface {
-	Allow(key string) bool
+	Allow(ctx context.Context, key string) bool
 }
 
 // Derleme zamanı kontrolü.
@@ -72,7 +73,10 @@ func NewRateLimiter(perMinute int, burst int) *RateLimiter {
 }
 
 // Allow — anahtar için bir istek harcamayı dener.
-func (rl *RateLimiter) Allow(key string) bool {
+//
+// ctx kullanılmıyor: sayaç bellekte, bloklama yok. İmzada olmasının sebebi
+// başka implementasyonların (Redis) ağ üzerinden gitmesi.
+func (rl *RateLimiter) Allow(_ context.Context, key string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -136,7 +140,7 @@ func KeyByUser(c *gin.Context) string {
 // yazmak ve gin'i import etmek zorunda kalırdı.
 func Limit(l Limiter, keyFn func(*gin.Context) string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !l.Allow(keyFn(c)) {
+		if !l.Allow(c.Request.Context(), keyFn(c)) {
 			// Retry-After: istemciye ne zaman tekrar deneyeceğini söyle.
 			// Olmadan istemciler agresif biçimde yeniden dener ve durumu kötüleştirir.
 			c.Header("Retry-After", "60")

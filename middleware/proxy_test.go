@@ -49,6 +49,7 @@ func spoofUntil429(r *gin.Engine, n int) bool {
 // Asıl koruma: SetupTrustedProxies sonrası sahte başlık limiti atlatamamalı.
 func TestSetupTrustedProxies_SpoofedHeaderCannotBypassLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	t.Setenv("TRUSTED_PROXIES", "") // vekil yok senaryosu
 
 	r := gin.New()
 	if err := SetupTrustedProxies(r); err != nil {
@@ -81,6 +82,7 @@ func TestDefaultTrustAll_IsActuallyVulnerable(t *testing.T) {
 // KeyByIP, vekile güvenilmediğinde başlığı değil gerçek adresi kullanmalı.
 func TestKeyByIP_UsesRealAddressWhenProxiesUntrusted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	t.Setenv("TRUSTED_PROXIES", "")
 
 	r := gin.New()
 	if err := SetupTrustedProxies(r); err != nil {
@@ -97,5 +99,34 @@ func TestKeyByIP_UsesRealAddressWhenProxiesUntrusted(t *testing.T) {
 
 	if got != "ip:10.0.0.7" {
 		t.Fatalf("expected the real address (ip:10.0.0.7), got %q", got)
+	}
+}
+
+// Vekil ARKASINDAYKEN: güvenilen ağdan gelen X-Forwarded-For okunmalı, yoksa
+// tüm kullanıcılar nginx'in IP'si altında tek sayaca düşer ve IP bazlı limit
+// anlamını yitirir.
+//
+// Sahtelenmeye karşı koruma burada gin'de değil NGINX'te: başlığı üzerine
+// yazıyor (nginx.conf, $remote_addr). Bu test yalnızca güvenilen vekilden
+// gelen değerin DOĞRU okunduğunu kilitler.
+func TestKeyByIP_UsesForwardedHeaderFromTrustedProxy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("TRUSTED_PROXIES", "172.16.0.0/12")
+
+	r := gin.New()
+	if err := SetupTrustedProxies(r); err != nil {
+		t.Fatalf("SetupTrustedProxies failed: %v", err)
+	}
+
+	var got string
+	r.GET("/k", func(c *gin.Context) { got = KeyByIP(c) })
+
+	req := httptest.NewRequest(http.MethodGet, "/k", nil)
+	req.Header.Set("X-Forwarded-For", "203.0.113.9") // nginx'in yazdığı gerçek istemci
+	req.RemoteAddr = "172.18.0.5:5555"               // nginx'in kendi adresi (güvenilen)
+	r.ServeHTTP(httptest.NewRecorder(), req)
+
+	if got != "ip:203.0.113.9" {
+		t.Fatalf("expected the client address forwarded by the proxy (ip:203.0.113.9), got %q", got)
 	}
 }

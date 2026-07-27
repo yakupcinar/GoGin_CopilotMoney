@@ -38,8 +38,24 @@ services:
       DB_PORT: "5432"
       REDIS_ADDR: redis:6379          # servis adı; container dışından farklıdır
       GIN_MODE: release               # gin otomatik okur, debug log kapanır
+      # Nginx arkasındayız: uygulama artık istemcinin değil NGINX'in IP'sini
+      # görür. Bu ayar olmadan tüm kullanıcılar tek sayaca düşer ve IP bazlı
+      # limit anlamsızlaşır. Yalnızca docker ağına güveniyoruz; dışarıdan
+      # gelen sahte X-Forwarded-For'u nginx zaten üzerine yazıyor.
+      TRUSTED_PROXIES: "172.16.0.0/12"
+    # ports YOK: uygulamaya artık yalnızca nginx üzerinden erişilir.
+    # Ayrıca aynı host portu birden fazla kopyaya bağlanamıyordu (--scale
+    # denemesinde "port is already allocated" hatası buradan geliyordu).
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - app
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
-      - "8080:8080"
+      - "8080:8080"          # tek giriş noktası artık burası
     restart: unless-stopped
 
 volumes:
