@@ -108,6 +108,13 @@ func main() {
 	go chatLimiter.StartSweeper(sweeperStop)
 
 	r := gin.New()
+
+	// Rate limiting'in tamamı ClientIP()'nin doğruluğuna bağlı; gerekçe ve
+	// vekil arkasına alındığında ne yapılacağı middleware/proxy.go'da.
+	if err := middleware.SetupTrustedProxies(r); err != nil {
+		log.Fatal(err)
+	}
+
 	r.Use(middleware.RequestLogger())
 	r.Use(gin.Recovery())
 
