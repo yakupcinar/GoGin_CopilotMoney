@@ -17,9 +17,9 @@ type fakeTokens struct {
 	calls   int
 }
 
-func (f *fakeTokens) Revoke(string, time.Time) error { return nil }
-func (f *fakeTokens) IsRevoked(string) (bool, error) { return false, nil }
-func (f *fakeTokens) DeleteExpired(time.Time) (int64, error) {
+func (f *fakeTokens) Revoke(context.Context, string, time.Time) error { return nil }
+func (f *fakeTokens) IsRevoked(context.Context, string) (bool, error) { return false, nil }
+func (f *fakeTokens) DeleteExpired(context.Context, time.Time) (int64, error) {
 	f.calls++
 	return f.deleted, f.err
 }
@@ -30,11 +30,11 @@ type fakePending struct {
 	calls   int
 }
 
-func (f *fakePending) Create(*models.PendingAction) error { return nil }
-func (f *fakePending) Claim(int, string, time.Time) (*models.PendingAction, error) {
+func (f *fakePending) Create(context.Context, *models.PendingAction) error { return nil }
+func (f *fakePending) Claim(context.Context, int, string, time.Time) (*models.PendingAction, error) {
 	return nil, nil
 }
-func (f *fakePending) DeleteExpired(time.Time) (int64, error) {
+func (f *fakePending) DeleteExpired(context.Context, time.Time) (int64, error) {
 	f.calls++
 	return f.deleted, f.err
 }
@@ -45,13 +45,13 @@ type fakeRefresh struct {
 	calls   int
 }
 
-func (f *fakeRefresh) Create(*models.RefreshToken) error { return nil }
-func (f *fakeRefresh) Consume(string, time.Time) (*models.RefreshToken, error) {
+func (f *fakeRefresh) Create(context.Context, *models.RefreshToken) error { return nil }
+func (f *fakeRefresh) Consume(context.Context, string, time.Time) (*models.RefreshToken, error) {
 	return nil, nil
 }
-func (f *fakeRefresh) Revoke(string, time.Time) error        { return nil }
-func (f *fakeRefresh) RevokeAllForUser(int, time.Time) error { return nil }
-func (f *fakeRefresh) DeleteExpired(time.Time) (int64, error) {
+func (f *fakeRefresh) Revoke(context.Context, string, time.Time) error        { return nil }
+func (f *fakeRefresh) RevokeAllForUser(context.Context, int, time.Time) error { return nil }
+func (f *fakeRefresh) DeleteExpired(context.Context, time.Time) (int64, error) {
 	f.calls++
 	return f.deleted, f.err
 }
@@ -61,7 +61,7 @@ func TestRunOnce_CleansAllThreeTables(t *testing.T) {
 	pending := &fakePending{deleted: 5}
 	refresh := &fakeRefresh{deleted: 7}
 
-	rep := NewCleaner(tokens, pending, refresh, time.Hour).RunOnce(time.Now())
+	rep := NewCleaner(tokens, pending, refresh, time.Hour).RunOnce(context.Background(), time.Now())
 
 	if rep.RevokedTokens != 3 || rep.PendingActions != 5 || rep.RefreshTokens != 7 {
 		t.Fatalf("beklenen 3/5/7, gelen %d/%d/%d",
@@ -80,7 +80,7 @@ func TestRunOnce_ContinuesAfterError(t *testing.T) {
 	pending := &fakePending{deleted: 4}
 	refresh := &fakeRefresh{deleted: 6}
 
-	rep := NewCleaner(tokens, pending, refresh, time.Hour).RunOnce(time.Now())
+	rep := NewCleaner(tokens, pending, refresh, time.Hour).RunOnce(context.Background(), time.Now())
 
 	if pending.calls != 1 || refresh.calls != 1 {
 		t.Fatalf("hata sonrası diğer tablolar denenmedi (pending=%d refresh=%d)",

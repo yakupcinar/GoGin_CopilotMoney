@@ -28,7 +28,7 @@ func (h *CategoryHandler) CreateCategory(c *gin.Context) {
 
 	userID := c.MustGet("user_id").(int)
 
-	if err := h.categories.Create(input.Name, input.Type, &userID); err != nil {
+	if err := h.categories.Create(c.Request.Context(), input.Name, input.Type, &userID); err != nil {
 		respondInternalError(c, err)
 		return
 	}
@@ -41,7 +41,7 @@ func (h *CategoryHandler) CreateCategory(c *gin.Context) {
 func (h *CategoryHandler) ListCategories(c *gin.Context) {
 	userID := c.MustGet("user_id").(int)
 
-	categories, err := h.categories.GetForUser(userID)
+	categories, err := h.categories.GetForUser(c.Request.Context(), userID)
 	if err != nil {
 		respondInternalError(c, err)
 		return
@@ -56,7 +56,7 @@ func (h *CategoryHandler) UpdateCategory(c *gin.Context) {
 		return
 	}
 
-	cat, err := h.categories.GetByID(id)
+	cat, err := h.categories.GetByID(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, repositories.ErrCategoryNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Category not Found"})
@@ -86,7 +86,7 @@ func (h *CategoryHandler) UpdateCategory(c *gin.Context) {
 		return
 	}
 
-	if err := h.categories.Update(id, input.Name, input.Type); err != nil {
+	if err := h.categories.Update(c.Request.Context(), id, input.Name, input.Type); err != nil {
 		if errors.Is(err, repositories.ErrCategoryNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Category not Found!"})
 			return
@@ -105,7 +105,7 @@ func (h *CategoryHandler) DeleteCategory(c *gin.Context) {
 		return
 	}
 
-	cat, err := h.categories.GetByID(id)
+	cat, err := h.categories.GetByID(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, repositories.ErrCategoryNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Category not Found"})
@@ -133,7 +133,7 @@ func (h *CategoryHandler) DeleteCategory(c *gin.Context) {
 	// SEBEP: AutoMigrate budget_categories.category_id için FK ÜRETMEZ (hiçbir
 	// modelde foreignKey etiketi yok). FK yoksa silme başarılı olur ve bütçede
 	// öksüz bir satır kalır — kullanıcının toplam limiti sessizce yanlış görünür.
-	used, err := h.budgets.CountByCategory(id)
+	used, err := h.budgets.CountByCategory(c.Request.Context(), id)
 	if err != nil {
 		respondInternalError(c, err)
 		return
@@ -143,7 +143,7 @@ func (h *CategoryHandler) DeleteCategory(c *gin.Context) {
 		return
 	}
 
-	if err := h.categories.Delete(id); err != nil {
+	if err := h.categories.Delete(c.Request.Context(), id); err != nil {
 		if errors.Is(err, repositories.ErrCategoryNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Category not Found"})
 			return

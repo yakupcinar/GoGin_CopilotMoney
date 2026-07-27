@@ -46,7 +46,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Password couldn't made"})
 		return
 	}
-	if err := h.users.Create(input.Username, hashedPassword); err != nil {
+	if err := h.users.Create(c.Request.Context(), input.Username, hashedPassword); err != nil {
 		if errors.Is(err, repositories.ErrUsernameTaken) {
 			c.JSON(http.StatusConflict, gin.H{"error": "Username Already Exist!"})
 			return
@@ -68,7 +68,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	user, err := h.users.GetByUsername(input.Username)
+	user, err := h.users.GetByUsername(c.Request.Context(), input.Username)
 	if err != nil {
 		// Altyapı hatasını (DB erişilemiyor vb.) "şifre yanlış" gibi göstermeyelim:
 		// yalnızca gerçekten kullanıcı yoksa 401 dön.
@@ -106,7 +106,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	now := time.Now()
-	record, err := h.refresh.Consume(auth.HashRefreshToken(raw), now)
+	record, err := h.refresh.Consume(c.Request.Context(), auth.HashRefreshToken(raw), now)
 	if err != nil {
 		h.handleRefreshFailure(c, record, err, now)
 		return
@@ -114,7 +114,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 	// Rolü TAZE oku: refresh token'ın içine gömseydik, yetkisi alınmış bir
 	// kullanıcı token'ı geçerli olduğu sürece eski yetkisini korurdu.
-	user, err := h.users.GetByID(record.UserID)
+	user, err := h.users.GetByID(c.Request.Context(), record.UserID)
 	if err != nil {
 		// Kullanıcı silinmiş olabilir — oturumu sonlandır.
 		auth.ClearRefreshCookie(c)
@@ -131,7 +131,7 @@ func (h *AuthHandler) handleRefreshFailure(c *gin.Context, record *models.Refres
 		// SIZINTI SİNYALİ: tüketilmiş bir token tekrar sunuldu.
 		// Ya saldırgan çaldı ya meşru kullanıcı eskisini oynatıyor — ayırt
 		// edemeyiz. Güvenli taraf: o kullanıcının TÜM oturumlarını kapat.
-		if revokeErr := h.refresh.RevokeAllForUser(record.UserID, now); revokeErr != nil {
+		if revokeErr := h.refresh.RevokeAllForUser(c.Request.Context(), record.UserID, now); revokeErr != nil {
 			log.Printf("reuse detected but revocation failed (user=%d): %v",
 				record.UserID, revokeErr)
 		} else {
@@ -160,7 +160,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 
 	// 1) Access token'ı kara listeye al. 15 dk kısa ama "çıkış yaptım" diyen
 	//    kullanıcının token'ı o 15 dk boyunca çalışmaya devam etmemeli.
-	if err := h.tokens.Revoke(jti, exp); err != nil {
+	if err := h.tokens.Revoke(c.Request.Context(), jti, exp); err != nil {
 		respondInternalError(c, err)
 		return
 	}
@@ -168,7 +168,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	// 2) Refresh token'ı iptal et. Cookie'yi silmek TEK BAŞINA yetmez:
 	//    değeri kopyalayan biri onu kullanmaya devam edebilirdi.
 	if raw := auth.RefreshTokenFromRequest(c); raw != "" {
-		if err := h.refresh.Revoke(auth.HashRefreshToken(raw), now); err != nil {
+		if err := h.refresh.Revoke(c.Request.Context(), auth.HashRefreshToken(raw), now); err != nil {
 			log.Println("logout: refresh token iptal edilemedi:", err)
 			// Akışı kesmiyoruz — access token zaten iptal edildi.
 		}
@@ -197,7 +197,7 @@ func (h *AuthHandler) issueTokenPair(c *gin.Context, user *models.User) {
 		return
 	}
 
-	if err := h.refresh.Create(&models.RefreshToken{
+	if err := h.refresh.Create(c.Request.Context(), &models.RefreshToken{
 		UserID:    user.ID,
 		TokenHash: hashRefresh, // ham değer DB'ye ASLA yazılmaz
 		ExpiresAt: time.Now().Add(auth.RefreshTokenTTL()),

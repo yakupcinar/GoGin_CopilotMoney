@@ -62,7 +62,7 @@ func (h *BudgetHandler) validateBudgetInput(c *gin.Context, userID int, startDat
 	// N kez GetByID değil — hem N sorgu olurdu hem de GetByID'de sahiplik
 	// filtresi yok, başkasının kategorisi bütçeye sızardı. GetForUser global
 	// kategorileri (user_id IS NULL) de döner.
-	visible, err := h.categories.GetForUser(userID)
+	visible, err := h.categories.GetForUser(c.Request.Context(), userID)
 	if err != nil {
 		respondInternalError(c, err)
 		return time.Time{}, false
@@ -102,7 +102,7 @@ func (h *BudgetHandler) CreateBudget(c *gin.Context) {
 		return
 	}
 
-	if err := h.budgets.Create(userID, input, startDate); err != nil {
+	if err := h.budgets.Create(c.Request.Context(), userID, input, startDate); err != nil {
 		if errors.Is(err, repositories.ErrBudgetExists) {
 			c.JSON(http.StatusConflict, gin.H{"error": "You already have a budget"})
 			return
@@ -132,7 +132,7 @@ func (h *BudgetHandler) GetBudget(c *gin.Context) {
 
 	// Görünüm hesabı chat.BuildBudgetView'de — aynı fonksiyonu chat de çağırır,
 	// böylece dönem/toplam/aşım mantığı tek yerde yaşar.
-	view, err := chat.BuildBudgetView(h.budgets, h.categories, h.accounts, h.transactions, userID, offset, now)
+	view, err := chat.BuildBudgetView(c.Request.Context(), h.budgets, h.categories, h.accounts, h.transactions, userID, offset, now)
 	if err != nil {
 		if errors.Is(err, repositories.ErrBudgetNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Budget not Found"})
@@ -149,7 +149,7 @@ func (h *BudgetHandler) UpdateBudget(c *gin.Context) {
 
 	// Bütçe var mı kontrolü JSON bağlamadan ÖNCE — mevcut update
 	// handler'larının kasıtlı sırası.
-	budget, err := h.budgets.GetForUser(userID)
+	budget, err := h.budgets.GetForUser(c.Request.Context(), userID)
 	if err != nil {
 		if errors.Is(err, repositories.ErrBudgetNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Budget not Found"})
@@ -170,7 +170,7 @@ func (h *BudgetHandler) UpdateBudget(c *gin.Context) {
 		return
 	}
 
-	if err := h.budgets.Replace(budget.ID, input, startDate); err != nil {
+	if err := h.budgets.Replace(c.Request.Context(), budget.ID, input, startDate); err != nil {
 		if errors.Is(err, repositories.ErrBudgetNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Budget not Found!"})
 			return
@@ -184,7 +184,7 @@ func (h *BudgetHandler) UpdateBudget(c *gin.Context) {
 func (h *BudgetHandler) DeleteBudget(c *gin.Context) {
 	userID := c.MustGet("user_id").(int)
 
-	budget, err := h.budgets.GetForUser(userID)
+	budget, err := h.budgets.GetForUser(c.Request.Context(), userID)
 	if err != nil {
 		if errors.Is(err, repositories.ErrBudgetNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Budget not Found"})
@@ -194,7 +194,7 @@ func (h *BudgetHandler) DeleteBudget(c *gin.Context) {
 		return
 	}
 
-	if err := h.budgets.Delete(budget.ID); err != nil {
+	if err := h.budgets.Delete(c.Request.Context(), budget.ID); err != nil {
 		if errors.Is(err, repositories.ErrBudgetNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Budget not Found!"})
 			return

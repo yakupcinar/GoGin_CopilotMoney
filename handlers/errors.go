@@ -21,8 +21,8 @@ func respondInternalError(c *gin.Context, err error) {
 func getAccountForRequest(c *gin.Context, accounts repositories.AccountRepository, accountID int) (*models.Account, error) {
 	role := c.MustGet("role").(models.Role)
 	if role == models.RoleAdmin {
-		return accounts.GetByID(accountID)
+		return accounts.GetByID(c.Request.Context(), accountID)
 	}
 	userID := c.MustGet("user_id").(int)
-	return accounts.GetByIDForUser(accountID, userID)
+	return accounts.GetByIDForUser(c.Request.Context(), accountID, userID)
 }

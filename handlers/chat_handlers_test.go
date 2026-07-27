@@ -3,6 +3,7 @@ package handlers
 import (
 	"GoGinMoneyCopilot/chat"
 	"GoGinMoneyCopilot/models"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -375,7 +376,7 @@ func TestConfirm_ValidToken_ExecutesDeletion(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("beklenen 200, gelen %d (%s)", w.Code, w.Body.String())
 	}
-	if _, err := f.categories.GetByID(2); err == nil {
+	if _, err := f.categories.GetByID(context.Background(), 2); err == nil {
 		t.Fatal("kategori silinmedi")
 	}
 }
@@ -453,7 +454,7 @@ func TestConfirm_TargetBecameInUse_Blocked(t *testing.T) {
 	if w.Code != http.StatusConflict {
 		t.Fatalf("beklenen 409, gelen %d (%s)", w.Code, w.Body.String())
 	}
-	if _, err := f.categories.GetByID(2); err != nil {
+	if _, err := f.categories.GetByID(context.Background(), 2); err != nil {
 		t.Fatal("kategori silindi — TOCTOU koruması çalışmadı")
 	}
 }
@@ -713,7 +714,7 @@ func TestConfirm_BudgetDelete_StaleTokenRejected(t *testing.T) {
 	token := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"bütçemi sil"}`)).Token
 
 	// Kullanıcı bu arada bütçesini değiştirdi: eski gitti, yeni (id=2) geldi.
-	_ = f.budgets.Delete(1)
+	_ = f.budgets.Delete(context.Background(), 1)
 	f.budgets.seed(&models.Budget{ID: 2, UserID: chatUserID, Name: "Yeni",
 		StartDate: models.CivilDate(time.Now()), PeriodDays: 15}, nil)
 
@@ -852,7 +853,7 @@ func TestConfirm_BudgetUpdate_StaleTokenRejected(t *testing.T) {
 
 	token := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"yeme 2000"}`)).Token
 
-	_ = f.budgets.Delete(1)
+	_ = f.budgets.Delete(context.Background(), 1)
 	f.budgets.seed(&models.Budget{ID: 2, UserID: chatUserID, Name: "Yeni",
 		StartDate: models.CivilDate(time.Now()), PeriodDays: 15},
 		[]models.BudgetCategory{{ID: 1, BudgetID: 2, CategoryID: 1, LimitAmount: 999}})

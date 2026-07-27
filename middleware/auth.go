@@ -32,7 +32,7 @@ func AuthMiddleware(tokens repositories.TokenRepository) gin.HandlerFunc {
 			return
 		}
 
-		revoked, err := tokens.IsRevoked(claims.JTI)
+		revoked, err := tokens.IsRevoked(c.Request.Context(), claims.JTI)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Token couldn't be verified"})
 			c.Abort()

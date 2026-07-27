@@ -35,7 +35,7 @@ func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
 		return
 	}
 
-	if err := h.transactions.Create(input); err != nil {
+	if err := h.transactions.Create(c.Request.Context(), input); err != nil {
 		respondInternalError(c, err)
 		return
 	}
@@ -49,7 +49,7 @@ func (h *TransactionHandler) GetTransaction(c *gin.Context) {
 		return
 	}
 
-	tx, err := h.transactions.GetByID(id)
+	tx, err := h.transactions.GetByID(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, repositories.ErrTransactionNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not Found"})
@@ -87,7 +87,7 @@ func (h *TransactionHandler) ListAccountTransactions(c *gin.Context) {
 		return
 	}
 
-	transactions, err := h.transactions.ListByAccount(id)
+	transactions, err := h.transactions.ListByAccount(c.Request.Context(), id)
 	if err != nil {
 		respondInternalError(c, err)
 		return
@@ -102,7 +102,7 @@ func (h *TransactionHandler) UpdateTransaction(c *gin.Context) {
 		return
 	}
 
-	tx, err := h.transactions.GetByID(id)
+	tx, err := h.transactions.GetByID(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, repositories.ErrTransactionNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not Found"})
@@ -127,7 +127,7 @@ func (h *TransactionHandler) UpdateTransaction(c *gin.Context) {
 		return
 	}
 
-	if err := h.transactions.Update(id, input); err != nil {
+	if err := h.transactions.Update(c.Request.Context(), id, input); err != nil {
 		if errors.Is(err, repositories.ErrTransactionNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not Found!"})
 			return
@@ -146,7 +146,7 @@ func (h *TransactionHandler) DeleteTransaction(c *gin.Context) {
 		return
 	}
 
-	tx, err := h.transactions.GetByID(id)
+	tx, err := h.transactions.GetByID(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, repositories.ErrTransactionNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not Found"})
@@ -165,7 +165,7 @@ func (h *TransactionHandler) DeleteTransaction(c *gin.Context) {
 		return
 	}
 
-	if err := h.transactions.Delete(id); err != nil {
+	if err := h.transactions.Delete(c.Request.Context(), id); err != nil {
 		if errors.Is(err, repositories.ErrTransactionNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not Found"})
 			return

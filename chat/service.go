@@ -108,11 +108,11 @@ func (s *ActionService) Chat(ctx context.Context, req ChatRequest) ([]Result, er
 	// İşlem tarihleri gün hassasiyetinde (DB'de DATE kolonu).
 	today := startOfDay(time.Now())
 
-	categories, err := s.categories.GetForUser(req.UserID)
+	categories, err := s.categories.GetForUser(ctx, req.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch categories: %w", err)
 	}
-	accounts, err := s.accounts.ListForUser(req.UserID)
+	accounts, err := s.accounts.ListForUser(ctx, req.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch accounts: %w", err)
 	}
@@ -129,13 +129,13 @@ func (s *ActionService) Chat(ctx context.Context, req ChatRequest) ([]Result, er
 
 	results := make([]Result, 0, len(actions))
 	for i := range actions {
-		results = append(results, s.handle(&actions[i], req, categories, today))
+		results = append(results, s.handle(ctx, &actions[i], req, categories, today))
 	}
 	return results, nil
 }
 
 // handle — tek eylemi doğrular ve riskine göre sonuç üretir.
-func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
+func (s *ActionService) handle(ctx context.Context, a *models.ParsedAction, req ChatRequest,
 	categories []models.Category, today time.Time) Result {
 
 	// BEYAZ LİSTE: modelin uydurduğu bir niyet asla çalışmaz.
@@ -161,7 +161,7 @@ func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
 		res.Data = categories
 
 	case models.IntentGetAccount:
-		acc, err := s.resolveAccount(a.Params, req)
+		acc, err := s.resolveAccount(ctx, a.Params, req)
 		if err != nil {
 			res.Error = err.Error()
 			return res
@@ -169,12 +169,12 @@ func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
 		res.Data = acc
 
 	case models.IntentListTransactions:
-		acc, err := s.resolveAccount(a.Params, req)
+		acc, err := s.resolveAccount(ctx, a.Params, req)
 		if err != nil {
 			res.Error = err.Error()
 			return res
 		}
-		txs, err := s.txs.ListByAccount(acc.ID)
+		txs, err := s.txs.ListByAccount(ctx, acc.ID)
 		if err != nil {
 			res.Error = "failed to fetch transactions"
 			return res
@@ -182,7 +182,7 @@ func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
 		res.Data = txs
 
 	case models.IntentGetTransaction:
-		tx, err := s.resolveTransaction(a.Params, req)
+		tx, err := s.resolveTransaction(ctx, a.Params, req)
 		if err != nil {
 			res.Error = err.Error()
 			return res
@@ -200,7 +200,7 @@ func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
 			return res
 		}
 		now := time.Now().In(models.AppLocation())
-		view, err := BuildBudgetView(s.budgets, s.categories, s.accounts, s.txs, req.UserID, offset, now)
+		view, err := BuildBudgetView(ctx, s.budgets, s.categories, s.accounts, s.txs, req.UserID, offset, now)
 		if err != nil {
 			if errors.Is(err, repositories.ErrBudgetNotFound) {
 				res.Error = "you don't have a budget yet"
@@ -240,7 +240,7 @@ func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
 		}
 
 	case models.IntentCreateTransaction:
-		payload, warns, needs, err := s.buildTransaction(a, req, categories, today)
+		payload, warns, needs, err := s.buildTransaction(ctx, a, req, categories, today)
 		res.Warnings = append(res.Warnings, warns...)
 		res.NeedsInput = append(res.NeedsInput, needs...)
 		if err != nil {
@@ -252,7 +252,7 @@ func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
 		}
 
 	case models.IntentBudgetSet:
-		payload, warns, needs, err := s.buildBudget(a, req, categories, today)
+		payload, warns, needs, err := s.buildBudget(ctx, a, req, categories, today)
 		res.Warnings = append(res.Warnings, warns...)
 		res.NeedsInput = append(res.NeedsInput, needs...)
 		if err != nil {
@@ -265,19 +265,19 @@ func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
 
 	// ---------------- yıkıcı: token + açık onay ----------------
 	case models.IntentDeleteCategory, models.IntentUpdateCategory:
-		s.prepareCategoryAction(&res, a, req, categories)
+		s.prepareCategoryAction(ctx, &res, a, req, categories)
 
 	case models.IntentDeleteAccount, models.IntentUpdateAccount:
-		s.prepareAccountAction(&res, a, req)
+		s.prepareAccountAction(ctx, &res, a, req)
 
 	case models.IntentDeleteTransaction, models.IntentUpdateTransaction:
-		s.prepareTransactionAction(&res, a, req)
+		s.prepareTransactionAction(ctx, &res, a, req)
 
 	case models.IntentBudgetDelete:
-		s.prepareBudgetAction(&res, a, req)
+		s.prepareBudgetAction(ctx, &res, a, req)
 
 	case models.IntentBudgetUpdate:
-		s.prepareBudgetUpdateAction(&res, a, req)
+		s.prepareBudgetUpdateAction(ctx, &res, a, req)
 
 	default:
 		res.Error = "action could not be understood"
@@ -287,7 +287,7 @@ func (s *ActionService) handle(a *models.ParsedAction, req ChatRequest,
 }
 
 // attachConfirmation — onay kaydı oluşturur ve token'ı sonuca ekler.
-func (s *ActionService) attachConfirmation(res *Result, userID int,
+func (s *ActionService) attachConfirmation(ctx context.Context, res *Result, userID int,
 	intent models.Intent, targetID int, summary string, params models.ActionParams) {
 
 	token, err := newToken()
@@ -300,7 +300,7 @@ func (s *ActionService) attachConfirmation(res *Result, userID int,
 		Summary: summary, Params: params,
 		ExpiresAt: time.Now().Add(pendingTTL),
 	}
-	if err := s.pending.Create(action); err != nil {
+	if err := s.pending.Create(ctx, action); err != nil {
 		res.Error = "failed to save confirmation token"
 		return
 	}

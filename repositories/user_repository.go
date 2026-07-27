@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"GoGinMoneyCopilot/models"
+	"context"
 	"errors"
 	"fmt"
 
@@ -13,9 +14,9 @@ var ErrUsernameTaken = errors.New("Username Aldready Exist!")
 var ErrUserNotFound = errors.New("User Not Found!")
 
 type UserRepository interface {
-	Create(username, passwordHash string) error
-	GetByUsername(username string) (*models.User, error)
-	GetByID(userID int) (*models.User, error)
+	Create(ctx context.Context, username, passwordHash string) error
+	GetByUsername(ctx context.Context, username string) (*models.User, error)
+	GetByID(ctx context.Context, userID int) (*models.User, error)
 }
 
 type gormUserRepository struct {
@@ -26,9 +27,9 @@ func NewUserRepository(db *gorm.DB) UserRepository {
 	return &gormUserRepository{db: db}
 }
 
-func (r *gormUserRepository) Create(username, passwordHash string) error {
+func (r *gormUserRepository) Create(ctx context.Context, username, passwordHash string) error {
 	user := models.User{Username: username, PasswordHash: passwordHash}
-	if err := r.db.Create(&user).Error; err != nil {
+	if err := r.db.WithContext(ctx).Create(&user).Error; err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return ErrUsernameTaken
@@ -38,9 +39,9 @@ func (r *gormUserRepository) Create(username, passwordHash string) error {
 	return nil
 }
 
-func (r *gormUserRepository) GetByUsername(username string) (*models.User, error) {
+func (r *gormUserRepository) GetByUsername(ctx context.Context, username string) (*models.User, error) {
 	var user models.User
-	if err := r.db.Where("username = ?", username).First(&user).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrUserNotFound
 		}
@@ -54,9 +55,9 @@ func (r *gormUserRepository) GetByUsername(username string) (*models.User, error
 // Yeni access token üretirken kullanıcının rolünü TAZE olarak okuyoruz.
 // Refresh token'ın içine rolü gömseydik, admin yetkisi alınmış bir kullanıcı
 // refresh token'ı geçerli olduğu sürece admin kalmaya devam ederdi.
-func (r *gormUserRepository) GetByID(userID int) (*models.User, error) {
+func (r *gormUserRepository) GetByID(ctx context.Context, userID int) (*models.User, error) {
 	var user models.User
-	if err := r.db.First(&user, userID).Error; err != nil {
+	if err := r.db.WithContext(ctx).First(&user, userID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrUserNotFound
 		}

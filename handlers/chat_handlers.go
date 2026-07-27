@@ -86,7 +86,7 @@ func (h *ChatHandler) Confirm(c *gin.Context) {
 
 	userID := c.MustGet("user_id").(int)
 
-	message, err := h.service.Confirm(userID, body.Token)
+	message, err := h.service.Confirm(c.Request.Context(), userID, body.Token)
 	if err != nil {
 		h.respondConfirmError(c, err)
 		return

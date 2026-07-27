@@ -57,22 +57,22 @@ func (r Report) Total() int64 {
 //
 // Bir tablo hata verirse DİĞERLERİNE DEVAM EDER. Bakım işi kısmi başarıyla
 // da değerlidir; hepsini birden iptal etmenin faydası yok.
-func (c *Cleaner) RunOnce(now time.Time) Report {
+func (c *Cleaner) RunOnce(ctx context.Context, now time.Time) Report {
 	var rep Report
 
-	if n, err := c.tokens.DeleteExpired(now); err != nil {
+	if n, err := c.tokens.DeleteExpired(ctx, now); err != nil {
 		log.Println("cleanup: revoked_tokens:", err)
 	} else {
 		rep.RevokedTokens = n
 	}
 
-	if n, err := c.pending.DeleteExpired(now); err != nil {
+	if n, err := c.pending.DeleteExpired(ctx, now); err != nil {
 		log.Println("cleanup: pending_actions:", err)
 	} else {
 		rep.PendingActions = n
 	}
 
-	if n, err := c.refresh.DeleteExpired(now); err != nil {
+	if n, err := c.refresh.DeleteExpired(ctx, now); err != nil {
 		log.Println("cleanup: refresh_tokens:", err)
 	} else {
 		rep.RefreshTokens = n
@@ -89,7 +89,7 @@ func (c *Cleaner) RunOnce(now time.Time) Report {
 // time.Sleep yerine ticker + select kullanıyoruz: kapanma sinyali gelince
 // bir saat beklemeden çıkabilelim.
 func (c *Cleaner) Start(ctx context.Context) {
-	c.logRun(c.RunOnce(time.Now()))
+	c.logRun(c.RunOnce(ctx, time.Now()))
 
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
@@ -100,7 +100,7 @@ func (c *Cleaner) Start(ctx context.Context) {
 			log.Println("cleanup worker stopped")
 			return
 		case <-ticker.C:
-			c.logRun(c.RunOnce(time.Now()))
+			c.logRun(c.RunOnce(ctx, time.Now()))
 		}
 	}
 }

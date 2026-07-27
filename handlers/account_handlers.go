@@ -27,7 +27,7 @@ func (h *AccountHandler) CreateAccount(c *gin.Context) {
 
 	userID := c.MustGet("user_id").(int)
 
-	if err := h.accounts.Create(input.Name, userID); err != nil {
+	if err := h.accounts.Create(c.Request.Context(), input.Name, userID); err != nil {
 		respondInternalError(c, err)
 		return
 	}
@@ -78,7 +78,7 @@ func (h *AccountHandler) UpdateAccount(c *gin.Context) {
 		return
 	}
 
-	if err := h.accounts.Update(id, input.Name); err != nil {
+	if err := h.accounts.Update(c.Request.Context(), id, input.Name); err != nil {
 		if errors.Is(err, repositories.ErrAccountNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Account not Found!"})
 			return
@@ -106,7 +106,7 @@ func (h *AccountHandler) DeleteAccount(c *gin.Context) {
 		return
 	}
 
-	if err := h.accounts.Delete(id); err != nil {
+	if err := h.accounts.Delete(c.Request.Context(), id); err != nil {
 		if errors.Is(err, repositories.ErrAccountNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Account not Found"})
 			return

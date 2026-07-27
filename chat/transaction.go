@@ -2,6 +2,7 @@ package chat
 
 import (
 	"GoGinMoneyCopilot/models"
+	"context"
 	"fmt"
 	"time"
 )
@@ -31,7 +32,7 @@ func dateInWindow(d, today time.Time) bool {
 //	                 Bir para değerini uydurmak, kullanıcıya sormaktan kötüdür.
 //	DÜZELTİLEBİLİR -> alanı temizle + kullanıcıya bildir (kategori, tarih, açıklama)
 //	                 Kategoriyi düşürmek her şeyi çöpe atmaktan iyidir.
-func (s *ActionService) buildTransaction(a *models.ParsedAction, req ChatRequest,
+func (s *ActionService) buildTransaction(ctx context.Context, a *models.ParsedAction, req ChatRequest,
 	categories []models.Category, today time.Time) (*models.CreateTransactionInput, []string, []string, error) {
 
 	p := a.Params
@@ -51,7 +52,7 @@ func (s *ActionService) buildTransaction(a *models.ParsedAction, req ChatRequest
 
 	// --- hesap: MODELDEN DEĞİL, istekten ---
 	// Model çıktısında account_id diye bir alan yok; olsa da okumazdık.
-	acc, err := s.resolveAccount(p, req)
+	acc, err := s.resolveAccount(ctx, p, req)
 	if err != nil {
 		return nil, warnings, needsInput, fmt.Errorf("could not determine the account: %w", err)
 	}

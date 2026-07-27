@@ -3,6 +3,7 @@ package chat
 import (
 	"GoGinMoneyCopilot/models"
 	"GoGinMoneyCopilot/repositories"
+	"context"
 	"math"
 	"time"
 )
@@ -26,6 +27,7 @@ func round2(v float64) float64 {
 // HATA: bütçe yoksa repositories.ErrBudgetNotFound döner (çağıran 404'e
 // çevirir). Diğer hatalar sarmalanmış altyapı hatasıdır (çağıran 500'e çevirir).
 func BuildBudgetView(
+	ctx context.Context,
 	budgets repositories.BudgetRepository,
 	categories repositories.CategoryRepository,
 	accounts repositories.AccountRepository,
@@ -33,19 +35,19 @@ func BuildBudgetView(
 	userID, offset int, now time.Time,
 ) (models.BudgetView, error) {
 
-	budget, err := budgets.GetForUser(userID)
+	budget, err := budgets.GetForUser(ctx, userID)
 	if err != nil {
 		return models.BudgetView{}, err
 	}
 
-	lines, err := budgets.ListCategories(budget.ID)
+	lines, err := budgets.ListCategories(ctx, budget.ID)
 	if err != nil {
 		return models.BudgetView{}, err
 	}
 
 	// Harcama kullanıcının TÜM hesaplarından toplanır: bütçe kullanıcı
 	// seviyesindedir, hesap yalnızca arayüz filtresidir.
-	accs, err := accounts.ListForUser(userID)
+	accs, err := accounts.ListForUser(ctx, userID)
 	if err != nil {
 		return models.BudgetView{}, err
 	}
@@ -56,13 +58,13 @@ func BuildBudgetView(
 
 	period := budget.PeriodAt(now, offset)
 
-	spent, err := txs.SumExpenseByCategory(accountIDs, period.Start, period.End)
+	spent, err := txs.SumExpenseByCategory(ctx, accountIDs, period.Start, period.End)
 	if err != nil {
 		return models.BudgetView{}, err
 	}
 
 	// Kategori adları için tek ek sorgu — satır başına sorgu (N+1) değil.
-	cats, err := categories.GetForUser(userID)
+	cats, err := categories.GetForUser(ctx, userID)
 	if err != nil {
 		return models.BudgetView{}, err
 	}

@@ -3,6 +3,7 @@ package chat
 import (
 	"GoGinMoneyCopilot/models"
 	"GoGinMoneyCopilot/repositories"
+	"context"
 	"errors"
 	"fmt"
 )
@@ -15,16 +16,16 @@ import (
 // "Emin misiniz?" diye sormak yanlıştır. Kullanıcı "Evet"e basar, sonra
 // hata alır. O yüzden kategori kullanımdaysa onay kodu HİÇ üretilmez.
 
-func (s *ActionService) prepareCategoryAction(res *Result, a *models.ParsedAction,
+func (s *ActionService) prepareCategoryAction(ctx context.Context, res *Result, a *models.ParsedAction,
 	req ChatRequest, categories []models.Category) {
 
-	cat, err := s.resolveCategory(a.Params, req)
+	cat, err := s.resolveCategory(ctx, a.Params, req)
 	if err != nil {
 		res.Error = err.Error()
 		return
 	}
 
-	used, err := s.txs.CountByCategory(cat.ID)
+	used, err := s.txs.CountByCategory(ctx, cat.ID)
 	if err != nil {
 		res.Error = "failed to check category usage"
 		return
@@ -47,17 +48,17 @@ func (s *ActionService) prepareCategoryAction(res *Result, a *models.ParsedActio
 		summary += fmt.Sprintf(" → new name: %q", a.Params.Name)
 	}
 
-	s.attachConfirmation(res, req.UserID, a.Intent, cat.ID, summary, a.Params)
+	s.attachConfirmation(ctx, res, req.UserID, a.Intent, cat.ID, summary, a.Params)
 }
 
-func (s *ActionService) prepareAccountAction(res *Result, a *models.ParsedAction, req ChatRequest) {
-	acc, err := s.resolveAccount(a.Params, req)
+func (s *ActionService) prepareAccountAction(ctx context.Context, res *Result, a *models.ParsedAction, req ChatRequest) {
+	acc, err := s.resolveAccount(ctx, a.Params, req)
 	if err != nil {
 		res.Error = err.Error()
 		return
 	}
 
-	txs, err := s.txs.ListByAccount(acc.ID)
+	txs, err := s.txs.ListByAccount(ctx, acc.ID)
 	if err != nil {
 		res.Error = "failed to check account transactions"
 		return
@@ -78,11 +79,11 @@ func (s *ActionService) prepareAccountAction(res *Result, a *models.ParsedAction
 		summary += fmt.Sprintf(" → new name: %q", a.Params.Name)
 	}
 
-	s.attachConfirmation(res, req.UserID, a.Intent, acc.ID, summary, a.Params)
+	s.attachConfirmation(ctx, res, req.UserID, a.Intent, acc.ID, summary, a.Params)
 }
 
-func (s *ActionService) prepareTransactionAction(res *Result, a *models.ParsedAction, req ChatRequest) {
-	tx, err := s.resolveTransaction(a.Params, req)
+func (s *ActionService) prepareTransactionAction(ctx context.Context, res *Result, a *models.ParsedAction, req ChatRequest) {
+	tx, err := s.resolveTransaction(ctx, a.Params, req)
 	if err != nil {
 		res.Error = err.Error()
 		return
@@ -92,7 +93,7 @@ func (s *ActionService) prepareTransactionAction(res *Result, a *models.ParsedAc
 		verbOf(a.Intent), tx.Amount, tx.Description,
 		tx.TransactionDate.Format("2006-01-02"))
 
-	s.attachConfirmation(res, req.UserID, a.Intent, tx.ID, summary, a.Params)
+	s.attachConfirmation(ctx, res, req.UserID, a.Intent, tx.ID, summary, a.Params)
 }
 
 // prepareBudgetAction — bütçe silme hazırlığı.
@@ -101,8 +102,8 @@ func (s *ActionService) prepareTransactionAction(res *Result, a *models.ParsedAc
 // GetForUser yeterli. Silmeyi engelleyen bir "kullanımda" durumu yok
 // (budget_categories bütçeyle birlikte gider), o yüzden ön kontrol sadece
 // "bütçe var mı".
-func (s *ActionService) prepareBudgetAction(res *Result, a *models.ParsedAction, req ChatRequest) {
-	budget, err := s.budgets.GetForUser(req.UserID)
+func (s *ActionService) prepareBudgetAction(ctx context.Context, res *Result, a *models.ParsedAction, req ChatRequest) {
+	budget, err := s.budgets.GetForUser(ctx, req.UserID)
 	if err != nil {
 		if errors.Is(err, repositories.ErrBudgetNotFound) {
 			res.Error = "you don't have a budget to delete"
@@ -112,7 +113,7 @@ func (s *ActionService) prepareBudgetAction(res *Result, a *models.ParsedAction,
 		return
 	}
 
-	lines, err := s.budgets.ListCategories(budget.ID)
+	lines, err := s.budgets.ListCategories(ctx, budget.ID)
 	if err != nil {
 		res.Error = "failed to check the budget"
 		return
@@ -121,7 +122,7 @@ func (s *ActionService) prepareBudgetAction(res *Result, a *models.ParsedAction,
 	summary := fmt.Sprintf("%s: budget %q (%d categories, %d-day period)",
 		verbOf(a.Intent), budget.Name, len(lines), budget.PeriodDays)
 
-	s.attachConfirmation(res, req.UserID, a.Intent, budget.ID, summary, a.Params)
+	s.attachConfirmation(ctx, res, req.UserID, a.Intent, budget.ID, summary, a.Params)
 }
 
 // prepareBudgetUpdateAction — bütçe değiştirme hazırlığı.
@@ -129,8 +130,8 @@ func (s *ActionService) prepareBudgetAction(res *Result, a *models.ParsedAction,
 // Asıl merge/doğrulama buildBudgetUpdate'te; burada onu bir kez çalıştırıp
 // (fail-fast + özet) token üretiyoruz. Üretilen taslak ATILIR — confirm onu
 // güncel duruma karşı yeniden kurar (TOCTOU).
-func (s *ActionService) prepareBudgetUpdateAction(res *Result, a *models.ParsedAction, req ChatRequest) {
-	_, budget, summary, err := s.buildBudgetUpdate(req.UserID, a.Params)
+func (s *ActionService) prepareBudgetUpdateAction(ctx context.Context, res *Result, a *models.ParsedAction, req ChatRequest) {
+	_, budget, summary, err := s.buildBudgetUpdate(ctx, req.UserID, a.Params)
 	if err != nil {
 		if errors.Is(err, repositories.ErrBudgetNotFound) {
 			res.Error = "you don't have a budget to modify"
@@ -140,7 +141,7 @@ func (s *ActionService) prepareBudgetUpdateAction(res *Result, a *models.ParsedA
 		return
 	}
 	full := fmt.Sprintf("%s: budget %q — %s", verbOf(a.Intent), budget.Name, summary)
-	s.attachConfirmation(res, req.UserID, a.Intent, budget.ID, full, a.Params)
+	s.attachConfirmation(ctx, res, req.UserID, a.Intent, budget.ID, full, a.Params)
 }
 
 // verbOf — özet metninin başına gelen fiil. Kullanıcı ne olacağını

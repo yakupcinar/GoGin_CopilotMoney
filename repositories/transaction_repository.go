@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"GoGinMoneyCopilot/models"
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -12,13 +13,13 @@ import (
 var ErrTransactionNotFound = errors.New("Transaction Not Found!")
 
 type TransactionRepository interface {
-	Create(input models.CreateTransactionInput) error
-	GetByID(transactionID int) (*models.Transaction, error)
-	ListByAccount(accountID int) ([]models.Transaction, error)
-	CountByCategory(categoryID int) (int64, error)
-	SumExpenseByCategory(accountIDs []int, from, to time.Time) (map[int]float64, error)
-	Update(transactionID int, input models.UpdateTransactionInput) error
-	Delete(transactionID int) error
+	Create(ctx context.Context, input models.CreateTransactionInput) error
+	GetByID(ctx context.Context, transactionID int) (*models.Transaction, error)
+	ListByAccount(ctx context.Context, accountID int) ([]models.Transaction, error)
+	CountByCategory(ctx context.Context, categoryID int) (int64, error)
+	SumExpenseByCategory(ctx context.Context, accountIDs []int, from, to time.Time) (map[int]float64, error)
+	Update(ctx context.Context, transactionID int, input models.UpdateTransactionInput) error
+	Delete(ctx context.Context, transactionID int) error
 }
 
 type gormTransactionRepository struct {
@@ -29,7 +30,7 @@ func NewTransactionRepository(db *gorm.DB) TransactionRepository {
 	return &gormTransactionRepository{db: db}
 }
 
-func (r *gormTransactionRepository) Create(input models.CreateTransactionInput) error {
+func (r *gormTransactionRepository) Create(ctx context.Context, input models.CreateTransactionInput) error {
 	tx := models.Transaction{
 		AccountID:       input.AccountID,
 		CategoryID:      input.CategoryID,
@@ -38,15 +39,15 @@ func (r *gormTransactionRepository) Create(input models.CreateTransactionInput) 
 		Description:     input.Description,
 		TransactionDate: input.TransactionDate,
 	}
-	if err := r.db.Create(&tx).Error; err != nil {
+	if err := r.db.WithContext(ctx).Create(&tx).Error; err != nil {
 		return fmt.Errorf("Transaction couldn't be created: %v", err)
 	}
 	return nil
 }
 
-func (r *gormTransactionRepository) GetByID(transactionID int) (*models.Transaction, error) {
+func (r *gormTransactionRepository) GetByID(ctx context.Context, transactionID int) (*models.Transaction, error) {
 	var tx models.Transaction
-	if err := r.db.First(&tx, transactionID).Error; err != nil {
+	if err := r.db.WithContext(ctx).First(&tx, transactionID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrTransactionNotFound
 		}
@@ -55,17 +56,17 @@ func (r *gormTransactionRepository) GetByID(transactionID int) (*models.Transact
 	return &tx, nil
 }
 
-func (r *gormTransactionRepository) ListByAccount(accountID int) ([]models.Transaction, error) {
+func (r *gormTransactionRepository) ListByAccount(ctx context.Context, accountID int) ([]models.Transaction, error) {
 	var transactions []models.Transaction
-	if err := r.db.Where("account_id = ?", accountID).Order("transaction_date DESC").Find(&transactions).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("account_id = ?", accountID).Order("transaction_date DESC").Find(&transactions).Error; err != nil {
 		return nil, fmt.Errorf("Transactions couldn't be fetched: %v", err)
 	}
 	return transactions, nil
 }
 
-func (r *gormTransactionRepository) CountByCategory(categoryID int) (int64, error) {
+func (r *gormTransactionRepository) CountByCategory(ctx context.Context, categoryID int) (int64, error) {
 	var count int64
-	if err := r.db.Model(&models.Transaction{}).
+	if err := r.db.WithContext(ctx).Model(&models.Transaction{}).
 		Where("category_id = ?", categoryID).Count(&count).Error; err != nil {
 		return 0, fmt.Errorf("Transaction count couldn't be fetched: %v", err)
 	}
@@ -87,7 +88,7 @@ func (r *gormTransactionRepository) CountByCategory(categoryID int) (int64, erro
 //
 // DÖNEN HARİTA: harcaması olmayan kategori haritada HİÇ BULUNMAZ. Çağıran,
 // eksik anahtarı Go'nun sıfır değeriyle 0 olarak okur.
-func (r *gormTransactionRepository) SumExpenseByCategory(accountIDs []int, from, to time.Time) (map[int]float64, error) {
+func (r *gormTransactionRepository) SumExpenseByCategory(ctx context.Context, accountIDs []int, from, to time.Time) (map[int]float64, error) {
 	sums := map[int]float64{}
 	// Hiç hesabı olmayan kullanıcı: sorguyu hiç açma.
 	if len(accountIDs) == 0 {
@@ -98,7 +99,7 @@ func (r *gormTransactionRepository) SumExpenseByCategory(accountIDs []int, from,
 		CategoryID int
 		Total      float64
 	}
-	if err := r.db.Model(&models.Transaction{}).
+	if err := r.db.WithContext(ctx).Model(&models.Transaction{}).
 		Select("category_id, COALESCE(SUM(amount), 0) AS total").
 		Where("account_id IN ? AND type = ? AND transaction_date >= ? AND transaction_date < ?",
 			accountIDs, "expense", from, to).
@@ -113,8 +114,8 @@ func (r *gormTransactionRepository) SumExpenseByCategory(accountIDs []int, from,
 	return sums, nil
 }
 
-func (r *gormTransactionRepository) Update(transactionID int, input models.UpdateTransactionInput) error {
-	result := r.db.Model(&models.Transaction{}).Where("id = ?", transactionID).Updates(map[string]interface{}{
+func (r *gormTransactionRepository) Update(ctx context.Context, transactionID int, input models.UpdateTransactionInput) error {
+	result := r.db.WithContext(ctx).Model(&models.Transaction{}).Where("id = ?", transactionID).Updates(map[string]interface{}{
 		"category_id":      input.CategoryID,
 		"amount":           input.Amount,
 		"type":             input.Type,
@@ -130,8 +131,8 @@ func (r *gormTransactionRepository) Update(transactionID int, input models.Updat
 	return nil
 }
 
-func (r *gormTransactionRepository) Delete(transactionID int) error {
-	result := r.db.Delete(&models.Transaction{}, transactionID)
+func (r *gormTransactionRepository) Delete(ctx context.Context, transactionID int) error {
+	result := r.db.WithContext(ctx).Delete(&models.Transaction{}, transactionID)
 	if result.Error != nil {
 		return fmt.Errorf("Transaction can't deleted: %v", result.Error)
 	}

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"GoGinMoneyCopilot/models"
+	"context"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -49,7 +50,7 @@ func TestCreateBudget_Success(t *testing.T) {
 	if len(bRepo.budgets) != 1 {
 		t.Fatalf("bütçe oluşmadı")
 	}
-	b, _ := bRepo.GetForUser(1)
+	b, _ := bRepo.GetForUser(context.Background(), 1)
 	if len(bRepo.lines[b.ID]) != 2 {
 		t.Fatalf("2 kategori satırı beklendi, gelen %d", len(bRepo.lines[b.ID]))
 	}

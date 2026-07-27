@@ -92,7 +92,7 @@ func (r *fakeAccountRepo) seed(acc *models.Account) {
 	}
 }
 
-func (r *fakeAccountRepo) Create(name string, userID int) error {
+func (r *fakeAccountRepo) Create(ctx context.Context, name string, userID int) error {
 	if err := r.injected("Create"); err != nil {
 		return err
 	}
@@ -102,7 +102,7 @@ func (r *fakeAccountRepo) Create(name string, userID int) error {
 	return nil
 }
 
-func (r *fakeAccountRepo) GetByID(accountID int) (*models.Account, error) {
+func (r *fakeAccountRepo) GetByID(ctx context.Context, accountID int) (*models.Account, error) {
 	if err := r.injected("GetByID"); err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func (r *fakeAccountRepo) GetByID(accountID int) (*models.Account, error) {
 	return acc, nil
 }
 
-func (r *fakeAccountRepo) GetByIDForUser(accountID, userID int) (*models.Account, error) {
+func (r *fakeAccountRepo) GetByIDForUser(ctx context.Context, accountID, userID int) (*models.Account, error) {
 	if err := r.injected("GetByIDForUser"); err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func (r *fakeAccountRepo) GetByIDForUser(accountID, userID int) (*models.Account
 	return acc, nil
 }
 
-func (r *fakeAccountRepo) ListForUser(userID int) ([]models.Account, error) {
+func (r *fakeAccountRepo) ListForUser(ctx context.Context, userID int) ([]models.Account, error) {
 	if err := r.injected("ListForUser"); err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func (r *fakeAccountRepo) ListForUser(userID int) ([]models.Account, error) {
 	return out, nil
 }
 
-func (r *fakeAccountRepo) Update(accountID int, name string) error {
+func (r *fakeAccountRepo) Update(ctx context.Context, accountID int, name string) error {
 	if err := r.injected("Update"); err != nil {
 		return err
 	}
@@ -149,7 +149,7 @@ func (r *fakeAccountRepo) Update(accountID int, name string) error {
 	return nil
 }
 
-func (r *fakeAccountRepo) Delete(accountID int) error {
+func (r *fakeAccountRepo) Delete(ctx context.Context, accountID int) error {
 	if err := r.injected("Delete"); err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func (r *fakeCategoryRepo) seed(cat *models.Category) {
 	}
 }
 
-func (r *fakeCategoryRepo) Create(name, categoryType string, userID *int) error {
+func (r *fakeCategoryRepo) Create(ctx context.Context, name, categoryType string, userID *int) error {
 	if err := r.injected("Create"); err != nil {
 		return err
 	}
@@ -198,7 +198,7 @@ func (r *fakeCategoryRepo) Create(name, categoryType string, userID *int) error 
 	return nil
 }
 
-func (r *fakeCategoryRepo) GetForUser(userID int) ([]models.Category, error) {
+func (r *fakeCategoryRepo) GetForUser(ctx context.Context, userID int) ([]models.Category, error) {
 	if err := r.injected("GetForUser"); err != nil {
 		return nil, err
 	}
@@ -211,7 +211,7 @@ func (r *fakeCategoryRepo) GetForUser(userID int) ([]models.Category, error) {
 	return out, nil
 }
 
-func (r *fakeCategoryRepo) GetByID(categoryID int) (*models.Category, error) {
+func (r *fakeCategoryRepo) GetByID(ctx context.Context, categoryID int) (*models.Category, error) {
 	if err := r.injected("GetByID"); err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (r *fakeCategoryRepo) GetByID(categoryID int) (*models.Category, error) {
 	return cat, nil
 }
 
-func (r *fakeCategoryRepo) Update(categoryID int, name, categoryType string) error {
+func (r *fakeCategoryRepo) Update(ctx context.Context, categoryID int, name, categoryType string) error {
 	if err := r.injected("Update"); err != nil {
 		return err
 	}
@@ -235,7 +235,7 @@ func (r *fakeCategoryRepo) Update(categoryID int, name, categoryType string) err
 	return nil
 }
 
-func (r *fakeCategoryRepo) Delete(categoryID int) error {
+func (r *fakeCategoryRepo) Delete(ctx context.Context, categoryID int) error {
 	if err := r.injected("Delete"); err != nil {
 		return err
 	}
@@ -272,7 +272,7 @@ func (r *fakeTransactionRepo) seed(tx *models.Transaction) {
 	}
 }
 
-func (r *fakeTransactionRepo) Create(input models.CreateTransactionInput) error {
+func (r *fakeTransactionRepo) Create(ctx context.Context, input models.CreateTransactionInput) error {
 	if err := r.injected("Create"); err != nil {
 		return err
 	}
@@ -291,7 +291,7 @@ func (r *fakeTransactionRepo) Create(input models.CreateTransactionInput) error 
 	return nil
 }
 
-func (r *fakeTransactionRepo) GetByID(transactionID int) (*models.Transaction, error) {
+func (r *fakeTransactionRepo) GetByID(ctx context.Context, transactionID int) (*models.Transaction, error) {
 	if err := r.injected("GetByID"); err != nil {
 		return nil, err
 	}
@@ -302,7 +302,7 @@ func (r *fakeTransactionRepo) GetByID(transactionID int) (*models.Transaction, e
 	return tx, nil
 }
 
-func (r *fakeTransactionRepo) ListByAccount(accountID int) ([]models.Transaction, error) {
+func (r *fakeTransactionRepo) ListByAccount(ctx context.Context, accountID int) ([]models.Transaction, error) {
 	if err := r.injected("ListByAccount"); err != nil {
 		return nil, err
 	}
@@ -315,7 +315,7 @@ func (r *fakeTransactionRepo) ListByAccount(accountID int) ([]models.Transaction
 	return out, nil
 }
 
-func (r *fakeTransactionRepo) CountByCategory(categoryID int) (int64, error) {
+func (r *fakeTransactionRepo) CountByCategory(ctx context.Context, categoryID int) (int64, error) {
 	if err := r.injected("CountByCategory"); err != nil {
 		return 0, err
 	}
@@ -331,7 +331,7 @@ func (r *fakeTransactionRepo) CountByCategory(categoryID int) (int64, error) {
 // SumExpenseByCategory — gerçek SQL'in mantığını BİREBİR yansıtır: sadece
 // expense, sadece verilen hesaplar, yarı açık [from, to) aralığı. Aksi halde
 // sınır testleri sorguyu değil sahteyi test etmiş olur.
-func (r *fakeTransactionRepo) SumExpenseByCategory(accountIDs []int, from, to time.Time) (map[int]float64, error) {
+func (r *fakeTransactionRepo) SumExpenseByCategory(ctx context.Context, accountIDs []int, from, to time.Time) (map[int]float64, error) {
 	if err := r.injected("SumExpenseByCategory"); err != nil {
 		return nil, err
 	}
@@ -356,7 +356,7 @@ func (r *fakeTransactionRepo) SumExpenseByCategory(accountIDs []int, from, to ti
 	return sums, nil
 }
 
-func (r *fakeTransactionRepo) Update(transactionID int, input models.UpdateTransactionInput) error {
+func (r *fakeTransactionRepo) Update(ctx context.Context, transactionID int, input models.UpdateTransactionInput) error {
 	if err := r.injected("Update"); err != nil {
 		return err
 	}
@@ -372,7 +372,7 @@ func (r *fakeTransactionRepo) Update(transactionID int, input models.UpdateTrans
 	return nil
 }
 
-func (r *fakeTransactionRepo) Delete(transactionID int) error {
+func (r *fakeTransactionRepo) Delete(ctx context.Context, transactionID int) error {
 	if err := r.injected("Delete"); err != nil {
 		return err
 	}
@@ -407,7 +407,7 @@ func (r *fakeUserRepo) seedUser(username, passwordHash string, role models.Role)
 	return u
 }
 
-func (r *fakeUserRepo) Create(username, passwordHash string) error {
+func (r *fakeUserRepo) Create(ctx context.Context, username, passwordHash string) error {
 	if err := r.injected("Create"); err != nil {
 		return err
 	}
@@ -424,7 +424,7 @@ func (r *fakeUserRepo) Create(username, passwordHash string) error {
 	return nil
 }
 
-func (r *fakeUserRepo) GetByID(userID int) (*models.User, error) {
+func (r *fakeUserRepo) GetByID(ctx context.Context, userID int) (*models.User, error) {
 	if err := r.injected("GetByID"); err != nil {
 		return nil, err
 	}
@@ -436,7 +436,7 @@ func (r *fakeUserRepo) GetByID(userID int) (*models.User, error) {
 	return nil, repositories.ErrUserNotFound
 }
 
-func (r *fakeUserRepo) GetByUsername(username string) (*models.User, error) {
+func (r *fakeUserRepo) GetByUsername(ctx context.Context, username string) (*models.User, error) {
 	if err := r.injected("GetByUsername"); err != nil {
 		return nil, err
 	}
@@ -461,7 +461,7 @@ func newFakeTokenRepo() *fakeTokenRepo {
 	}
 }
 
-func (r *fakeTokenRepo) Revoke(jti string, expiresAt time.Time) error {
+func (r *fakeTokenRepo) Revoke(ctx context.Context, jti string, expiresAt time.Time) error {
 	if err := r.injected("Revoke"); err != nil {
 		return err
 	}
@@ -469,14 +469,14 @@ func (r *fakeTokenRepo) Revoke(jti string, expiresAt time.Time) error {
 	return nil
 }
 
-func (r *fakeTokenRepo) DeleteExpired(before time.Time) (int64, error) {
+func (r *fakeTokenRepo) DeleteExpired(ctx context.Context, before time.Time) (int64, error) {
 	if err := r.injected("DeleteExpired"); err != nil {
 		return 0, err
 	}
 	return 0, nil
 }
 
-func (r *fakeTokenRepo) IsRevoked(jti string) (bool, error) {
+func (r *fakeTokenRepo) IsRevoked(ctx context.Context, jti string) (bool, error) {
 	if err := r.injected("IsRevoked"); err != nil {
 		return false, err
 	}
@@ -525,7 +525,7 @@ func newFakeRefreshRepo() *fakeRefreshRepo {
 	}
 }
 
-func (r *fakeRefreshRepo) Create(token *models.RefreshToken) error {
+func (r *fakeRefreshRepo) Create(ctx context.Context, token *models.RefreshToken) error {
 	if err := r.injected("Create"); err != nil {
 		return err
 	}
@@ -536,7 +536,7 @@ func (r *fakeRefreshRepo) Create(token *models.RefreshToken) error {
 	return nil
 }
 
-func (r *fakeRefreshRepo) Consume(tokenHash string, now time.Time) (*models.RefreshToken, error) {
+func (r *fakeRefreshRepo) Consume(ctx context.Context, tokenHash string, now time.Time) (*models.RefreshToken, error) {
 	if err := r.injected("Consume"); err != nil {
 		return nil, err
 	}
@@ -555,7 +555,7 @@ func (r *fakeRefreshRepo) Consume(tokenHash string, now time.Time) (*models.Refr
 	return t, nil
 }
 
-func (r *fakeRefreshRepo) Revoke(tokenHash string, now time.Time) error {
+func (r *fakeRefreshRepo) Revoke(ctx context.Context, tokenHash string, now time.Time) error {
 	if err := r.injected("Revoke"); err != nil {
 		return err
 	}
@@ -565,7 +565,7 @@ func (r *fakeRefreshRepo) Revoke(tokenHash string, now time.Time) error {
 	return nil
 }
 
-func (r *fakeRefreshRepo) RevokeAllForUser(userID int, now time.Time) error {
+func (r *fakeRefreshRepo) RevokeAllForUser(ctx context.Context, userID int, now time.Time) error {
 	if err := r.injected("RevokeAllForUser"); err != nil {
 		return err
 	}
@@ -577,7 +577,7 @@ func (r *fakeRefreshRepo) RevokeAllForUser(userID int, now time.Time) error {
 	return nil
 }
 
-func (r *fakeRefreshRepo) DeleteExpired(before time.Time) (int64, error) {
+func (r *fakeRefreshRepo) DeleteExpired(ctx context.Context, before time.Time) (int64, error) {
 	if err := r.injected("DeleteExpired"); err != nil {
 		return 0, err
 	}
@@ -609,7 +609,7 @@ func newFakePendingRepo() *fakePendingRepo {
 	}
 }
 
-func (r *fakePendingRepo) Create(action *models.PendingAction) error {
+func (r *fakePendingRepo) Create(ctx context.Context, action *models.PendingAction) error {
 	if err := r.injected("Create"); err != nil {
 		return err
 	}
@@ -618,7 +618,7 @@ func (r *fakePendingRepo) Create(action *models.PendingAction) error {
 	return nil
 }
 
-func (r *fakePendingRepo) Claim(userID int, token string, now time.Time) (*models.PendingAction, error) {
+func (r *fakePendingRepo) Claim(ctx context.Context, userID int, token string, now time.Time) (*models.PendingAction, error) {
 	if err := r.injected("Claim"); err != nil {
 		return nil, err
 	}
@@ -630,7 +630,7 @@ func (r *fakePendingRepo) Claim(userID int, token string, now time.Time) (*model
 	return a, nil
 }
 
-func (r *fakePendingRepo) DeleteExpired(before time.Time) (int64, error) {
+func (r *fakePendingRepo) DeleteExpired(ctx context.Context, before time.Time) (int64, error) {
 	if err := r.injected("DeleteExpired"); err != nil {
 		return 0, err
 	}
@@ -695,7 +695,7 @@ func (r *fakeBudgetRepo) seed(b *models.Budget, lines []models.BudgetCategory) {
 	}
 }
 
-func (r *fakeBudgetRepo) Create(userID int, input models.CreateBudgetInput, startDate time.Time) error {
+func (r *fakeBudgetRepo) Create(ctx context.Context, userID int, input models.CreateBudgetInput, startDate time.Time) error {
 	if err := r.injected("Create"); err != nil {
 		return err
 	}
@@ -730,7 +730,7 @@ func fakeLinesFor(budgetID int, inputs []models.BudgetCategoryInput) []models.Bu
 	return out
 }
 
-func (r *fakeBudgetRepo) GetForUser(userID int) (*models.Budget, error) {
+func (r *fakeBudgetRepo) GetForUser(ctx context.Context, userID int) (*models.Budget, error) {
 	if err := r.injected("GetForUser"); err != nil {
 		return nil, err
 	}
@@ -742,14 +742,14 @@ func (r *fakeBudgetRepo) GetForUser(userID int) (*models.Budget, error) {
 	return nil, repositories.ErrBudgetNotFound
 }
 
-func (r *fakeBudgetRepo) ListCategories(budgetID int) ([]models.BudgetCategory, error) {
+func (r *fakeBudgetRepo) ListCategories(ctx context.Context, budgetID int) ([]models.BudgetCategory, error) {
 	if err := r.injected("ListCategories"); err != nil {
 		return nil, err
 	}
 	return r.lines[budgetID], nil
 }
 
-func (r *fakeBudgetRepo) Replace(budgetID int, input models.UpdateBudgetInput, startDate time.Time) error {
+func (r *fakeBudgetRepo) Replace(ctx context.Context, budgetID int, input models.UpdateBudgetInput, startDate time.Time) error {
 	if err := r.injected("Replace"); err != nil {
 		return err
 	}
@@ -764,7 +764,7 @@ func (r *fakeBudgetRepo) Replace(budgetID int, input models.UpdateBudgetInput, s
 	return nil
 }
 
-func (r *fakeBudgetRepo) Delete(budgetID int) error {
+func (r *fakeBudgetRepo) Delete(ctx context.Context, budgetID int) error {
 	if err := r.injected("Delete"); err != nil {
 		return err
 	}
@@ -776,7 +776,7 @@ func (r *fakeBudgetRepo) Delete(budgetID int) error {
 	return nil
 }
 
-func (r *fakeBudgetRepo) CountByCategory(categoryID int) (int64, error) {
+func (r *fakeBudgetRepo) CountByCategory(ctx context.Context, categoryID int) (int64, error) {
 	if err := r.injected("CountByCategory"); err != nil {
 		return 0, err
 	}

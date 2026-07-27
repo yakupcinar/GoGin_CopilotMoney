@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"GoGinMoneyCopilot/models"
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -23,12 +24,12 @@ var ErrBudgetExists = errors.New("Budget Already Exists!")
 // yoktur. Replace/Delete'e giden budgetID her zaman handler'ın az önce yaptığı
 // bir GetForUser'dan gelir.
 type BudgetRepository interface {
-	Create(userID int, input models.CreateBudgetInput, startDate time.Time) error
-	GetForUser(userID int) (*models.Budget, error)
-	ListCategories(budgetID int) ([]models.BudgetCategory, error)
-	Replace(budgetID int, input models.UpdateBudgetInput, startDate time.Time) error
-	Delete(budgetID int) error
-	CountByCategory(categoryID int) (int64, error)
+	Create(ctx context.Context, userID int, input models.CreateBudgetInput, startDate time.Time) error
+	GetForUser(ctx context.Context, userID int) (*models.Budget, error)
+	ListCategories(ctx context.Context, budgetID int) ([]models.BudgetCategory, error)
+	Replace(ctx context.Context, budgetID int, input models.UpdateBudgetInput, startDate time.Time) error
+	Delete(ctx context.Context, budgetID int) error
+	CountByCategory(ctx context.Context, categoryID int) (int64, error)
 }
 
 type gormBudgetRepository struct {
@@ -57,8 +58,8 @@ func linesFor(budgetID int, inputs []models.BudgetCategoryInput) []models.Budget
 // NEDEN TRANSACTION (projede ilk kez kullanılıyor): satırlar yazılmadan başlık
 // kalırsa bütçe "toplam limit 0" olarak görünür. Patlamaz — sessizce yanlış
 // olur, ki bu en kötüsüdür.
-func (r *gormBudgetRepository) Create(userID int, input models.CreateBudgetInput, startDate time.Time) error {
-	err := r.db.Transaction(func(tx *gorm.DB) error {
+func (r *gormBudgetRepository) Create(ctx context.Context, userID int, input models.CreateBudgetInput, startDate time.Time) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		budget := models.Budget{
 			UserID:     userID,
 			Name:       input.Name,
@@ -83,9 +84,9 @@ func (r *gormBudgetRepository) Create(userID int, input models.CreateBudgetInput
 	return nil
 }
 
-func (r *gormBudgetRepository) GetForUser(userID int) (*models.Budget, error) {
+func (r *gormBudgetRepository) GetForUser(ctx context.Context, userID int) (*models.Budget, error) {
 	var budget models.Budget
-	if err := r.db.Where("user_id = ?", userID).First(&budget).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("user_id = ?", userID).First(&budget).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrBudgetNotFound
 		}
@@ -94,9 +95,9 @@ func (r *gormBudgetRepository) GetForUser(userID int) (*models.Budget, error) {
 	return &budget, nil
 }
 
-func (r *gormBudgetRepository) ListCategories(budgetID int) ([]models.BudgetCategory, error) {
+func (r *gormBudgetRepository) ListCategories(ctx context.Context, budgetID int) ([]models.BudgetCategory, error) {
 	var lines []models.BudgetCategory
-	if err := r.db.Where("budget_id = ?", budgetID).Order("id").Find(&lines).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("budget_id = ?", budgetID).Order("id").Find(&lines).Error; err != nil {
 		return nil, fmt.Errorf("Budget categories couldn't be fetched: %v", err)
 	}
 	return lines, nil
@@ -104,8 +105,8 @@ func (r *gormBudgetRepository) ListCategories(budgetID int) ([]models.BudgetCate
 
 // Replace — TAM DEĞİŞTİRME: başlık güncellenir, eski satırlar silinip yenileri
 // yazılır. Hepsi tek transaction'da; yarı yazılmış bir bütçe kalamaz.
-func (r *gormBudgetRepository) Replace(budgetID int, input models.UpdateBudgetInput, startDate time.Time) error {
-	err := r.db.Transaction(func(tx *gorm.DB) error {
+func (r *gormBudgetRepository) Replace(ctx context.Context, budgetID int, input models.UpdateBudgetInput, startDate time.Time) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&models.Budget{}).Where("id = ?", budgetID).Updates(map[string]interface{}{
 			"name":        input.Name,
 			"start_date":  models.CivilDate(startDate),
@@ -134,8 +135,8 @@ func (r *gormBudgetRepository) Replace(budgetID int, input models.UpdateBudgetIn
 // Delete — satırlar ELLE siliniyor, ON DELETE CASCADE'e güvenilmiyor:
 // AutoMigrate bu projede hiçbir FK kısıtı üretmez (hiçbir modelde foreignKey
 // etiketi yok), dolayısıyla cascade diye bir şey yoktur.
-func (r *gormBudgetRepository) Delete(budgetID int) error {
-	err := r.db.Transaction(func(tx *gorm.DB) error {
+func (r *gormBudgetRepository) Delete(ctx context.Context, budgetID int) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("budget_id = ?", budgetID).Delete(&models.BudgetCategory{}).Error; err != nil {
 			return err
 		}
@@ -160,9 +161,9 @@ func (r *gormBudgetRepository) Delete(budgetID int) error {
 // CountByCategory — bir kategoriye kaç bütçe satırı bağlı. Kategori silmeden
 // önce 409 kararı için kullanılır; TransactionRepository.CountByCategory ile
 // bilerek aynı isim ve şekilde.
-func (r *gormBudgetRepository) CountByCategory(categoryID int) (int64, error) {
+func (r *gormBudgetRepository) CountByCategory(ctx context.Context, categoryID int) (int64, error) {
 	var count int64
-	if err := r.db.Model(&models.BudgetCategory{}).
+	if err := r.db.WithContext(ctx).Model(&models.BudgetCategory{}).
 		Where("category_id = ?", categoryID).Count(&count).Error; err != nil {
 		return 0, fmt.Errorf("Budget category count couldn't be fetched: %v", err)
 	}

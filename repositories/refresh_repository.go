@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"GoGinMoneyCopilot/models"
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -25,13 +26,13 @@ var (
 )
 
 type RefreshTokenRepository interface {
-	Create(token *models.RefreshToken) error
+	Create(ctx context.Context, token *models.RefreshToken) error
 	// Consume — ATOMİK tüketim. ErrRefreshTokenReused durumunda kaydı DA döner,
 	// çünkü çağıranın o kullanıcının tüm oturumlarını iptal etmesi gerekir.
-	Consume(tokenHash string, now time.Time) (*models.RefreshToken, error)
-	Revoke(tokenHash string, now time.Time) error
-	RevokeAllForUser(userID int, now time.Time) error
-	DeleteExpired(before time.Time) (int64, error)
+	Consume(ctx context.Context, tokenHash string, now time.Time) (*models.RefreshToken, error)
+	Revoke(ctx context.Context, tokenHash string, now time.Time) error
+	RevokeAllForUser(ctx context.Context, userID int, now time.Time) error
+	DeleteExpired(ctx context.Context, before time.Time) (int64, error)
 }
 
 type gormRefreshTokenRepository struct {
@@ -42,8 +43,8 @@ func NewRefreshTokenRepository(db *gorm.DB) RefreshTokenRepository {
 	return &gormRefreshTokenRepository{db: db}
 }
 
-func (r *gormRefreshTokenRepository) Create(token *models.RefreshToken) error {
-	if err := r.db.Create(token).Error; err != nil {
+func (r *gormRefreshTokenRepository) Create(ctx context.Context, token *models.RefreshToken) error {
+	if err := r.db.WithContext(ctx).Create(token).Error; err != nil {
 		return fmt.Errorf("Refresh token couldn't be created: %v", err)
 	}
 	return nil
@@ -60,8 +61,8 @@ func (r *gormRefreshTokenRepository) Create(token *models.RefreshToken) error {
 // RowsAffected == 0 ise sebebini AYRICA sorguluyoruz — çünkü "tüketilmiş token
 // tekrar geldi" durumu diğerlerinden farklı bir tepki gerektiriyor (tüm
 // oturumları iptal et).
-func (r *gormRefreshTokenRepository) Consume(tokenHash string, now time.Time) (*models.RefreshToken, error) {
-	result := r.db.Model(&models.RefreshToken{}).
+func (r *gormRefreshTokenRepository) Consume(ctx context.Context, tokenHash string, now time.Time) (*models.RefreshToken, error) {
+	result := r.db.WithContext(ctx).Model(&models.RefreshToken{}).
 		Where("token_hash = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?",
 			tokenHash, now).
 		Update("used_at", now)
@@ -72,7 +73,7 @@ func (r *gormRefreshTokenRepository) Consume(tokenHash string, now time.Time) (*
 
 	if result.RowsAffected == 1 {
 		var token models.RefreshToken
-		if err := r.db.Where("token_hash = ?", tokenHash).First(&token).Error; err != nil {
+		if err := r.db.WithContext(ctx).Where("token_hash = ?", tokenHash).First(&token).Error; err != nil {
 			return nil, fmt.Errorf("Refresh token couldn't be fetched: %v", err)
 		}
 		return &token, nil
@@ -80,7 +81,7 @@ func (r *gormRefreshTokenRepository) Consume(tokenHash string, now time.Time) (*
 
 	// Tüketemedik. Neden? Sızıntı mı, sıradan geçersizlik mi?
 	var existing models.RefreshToken
-	if err := r.db.Where("token_hash = ?", tokenHash).First(&existing).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("token_hash = ?", tokenHash).First(&existing).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrRefreshTokenInvalid
 		}
@@ -103,8 +104,8 @@ func (r *gormRefreshTokenRepository) Consume(tokenHash string, now time.Time) (*
 // Neden Consume değil de ayrı bir metot? Consume "rotasyon için tüketildi"
 // anlamına gelir; logout ise "bu oturum bitti". İkisini ayırmak, ileride
 // "aktif oturumlarım" ekranı yapıldığında durumu doğru göstermeyi sağlar.
-func (r *gormRefreshTokenRepository) Revoke(tokenHash string, now time.Time) error {
-	result := r.db.Model(&models.RefreshToken{}).
+func (r *gormRefreshTokenRepository) Revoke(ctx context.Context, tokenHash string, now time.Time) error {
+	result := r.db.WithContext(ctx).Model(&models.RefreshToken{}).
 		Where("token_hash = ? AND revoked_at IS NULL", tokenHash).
 		Update("revoked_at", now)
 	if result.Error != nil {
@@ -118,8 +119,8 @@ func (r *gormRefreshTokenRepository) Revoke(tokenHash string, now time.Time) err
 // İki yerde kullanılır:
 //  1. Sızıntı tespitinde (ErrRefreshTokenReused) — tüm cihazlardan çıkış
 //  2. İstenirse "her yerden çıkış yap" özelliğinde
-func (r *gormRefreshTokenRepository) RevokeAllForUser(userID int, now time.Time) error {
-	result := r.db.Model(&models.RefreshToken{}).
+func (r *gormRefreshTokenRepository) RevokeAllForUser(ctx context.Context, userID int, now time.Time) error {
+	result := r.db.WithContext(ctx).Model(&models.RefreshToken{}).
 		Where("user_id = ? AND revoked_at IS NULL", userID).
 		Update("revoked_at", now)
 	if result.Error != nil {
@@ -131,8 +132,8 @@ func (r *gormRefreshTokenRepository) RevokeAllForUser(userID int, now time.Time)
 // DeleteExpired — süresi geçmiş kayıtları temizler.
 // revoked_tokens ve pending_actions tablolarında da aynı ihtiyaç var;
 // üçü tek bir periyodik temizlik görevine bağlanmalı.
-func (r *gormRefreshTokenRepository) DeleteExpired(before time.Time) (int64, error) {
-	result := r.db.Where("expires_at < ?", before).Delete(&models.RefreshToken{})
+func (r *gormRefreshTokenRepository) DeleteExpired(ctx context.Context, before time.Time) (int64, error) {
+	result := r.db.WithContext(ctx).Where("expires_at < ?", before).Delete(&models.RefreshToken{})
 	if result.Error != nil {
 		return 0, fmt.Errorf("Expired refresh tokens couldn't be deleted: %v", result.Error)
 	}

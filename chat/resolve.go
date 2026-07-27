@@ -3,6 +3,7 @@ package chat
 import (
 	"GoGinMoneyCopilot/models"
 	"GoGinMoneyCopilot/repositories"
+	"context"
 	"errors"
 	"strings"
 )
@@ -29,25 +30,25 @@ var (
 
 // resolveAccount — sıra: açık id > isim > varsayılan hesap.
 // Her yolda sahiplik SORGU seviyesinde doğrulanır.
-func (s *ActionService) resolveAccount(p models.ActionParams, req ChatRequest) (*models.Account, error) {
+func (s *ActionService) resolveAccount(ctx context.Context, p models.ActionParams, req ChatRequest) (*models.Account, error) {
 	if p.TargetID != nil {
-		return s.accounts.GetByIDForUser(*p.TargetID, req.UserID)
+		return s.accounts.GetByIDForUser(ctx, *p.TargetID, req.UserID)
 	}
 	if strings.TrimSpace(p.TargetRef) != "" {
-		accounts, err := s.accounts.ListForUser(req.UserID)
+		accounts, err := s.accounts.ListForUser(ctx, req.UserID)
 		if err != nil {
 			return nil, err
 		}
 		return matchAccount(accounts, p.TargetRef)
 	}
 	if req.DefaultAccountID != 0 {
-		return s.accounts.GetByIDForUser(req.DefaultAccountID, req.UserID)
+		return s.accounts.GetByIDForUser(ctx, req.DefaultAccountID, req.UserID)
 	}
 
 	// Hesap belirtilmemiş: kullanıcının TEK hesabı varsa onu kullan.
 	// Birden fazlaysa tahmin etme — yanlış hesaba kayıt yazmak, kullanıcıya
 	// sormaktan kötüdür (kategori/tutar mantığının aynısı).
-	accounts, err := s.accounts.ListForUser(req.UserID)
+	accounts, err := s.accounts.ListForUser(ctx, req.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -63,9 +64,9 @@ func (s *ActionService) resolveAccount(p models.ActionParams, req ChatRequest) (
 
 // resolveCategory — global kategoriler (UserID == nil) chat üzerinden
 // değiştirilemez: onlar tüm kullanıcılar tarafından paylaşılıyor.
-func (s *ActionService) resolveCategory(p models.ActionParams, req ChatRequest) (*models.Category, error) {
+func (s *ActionService) resolveCategory(ctx context.Context, p models.ActionParams, req ChatRequest) (*models.Category, error) {
 	if p.TargetID != nil {
-		cat, err := s.categories.GetByID(*p.TargetID)
+		cat, err := s.categories.GetByID(ctx, *p.TargetID)
 		if err != nil {
 			return nil, err
 		}
@@ -79,7 +80,7 @@ func (s *ActionService) resolveCategory(p models.ActionParams, req ChatRequest) 
 		return cat, nil
 	}
 
-	categories, err := s.categories.GetForUser(req.UserID)
+	categories, err := s.categories.GetForUser(ctx, req.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -94,16 +95,16 @@ func (s *ActionService) resolveCategory(p models.ActionParams, req ChatRequest) 
 }
 
 // resolveTransaction — işlemler isimle güvenilir çözülemez; açık id şart.
-func (s *ActionService) resolveTransaction(p models.ActionParams, req ChatRequest) (*models.Transaction, error) {
+func (s *ActionService) resolveTransaction(ctx context.Context, p models.ActionParams, req ChatRequest) (*models.Transaction, error) {
 	if p.TargetID == nil {
 		return nil, ErrTransactionRef
 	}
-	tx, err := s.txs.GetByID(*p.TargetID)
+	tx, err := s.txs.GetByID(ctx, *p.TargetID)
 	if err != nil {
 		return nil, err
 	}
 	// İşlemin sahipliği, bağlı olduğu HESABIN sahipliğinden gelir.
-	if _, err := s.accounts.GetByIDForUser(tx.AccountID, req.UserID); err != nil {
+	if _, err := s.accounts.GetByIDForUser(ctx, tx.AccountID, req.UserID); err != nil {
 		return nil, repositories.ErrTransactionNotFound
 	}
 	return tx, nil

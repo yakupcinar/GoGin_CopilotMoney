@@ -3,6 +3,7 @@ package chat
 import (
 	"GoGinMoneyCopilot/models"
 	"GoGinMoneyCopilot/repositories"
+	"context"
 	"fmt"
 	"time"
 )
@@ -22,29 +23,29 @@ import (
 // Buna TOCTOU denir (kontrol anı ile kullanım anı arasındaki boşluk).
 // Playground'da bunu canlı gördük: token geçerliydi ama kategori bu arada
 // kullanıma girmişti, silme engellendi.
-func (s *ActionService) Confirm(userID int, token string) (string, error) {
-	action, err := s.pending.Claim(userID, token, time.Now())
+func (s *ActionService) Confirm(ctx context.Context, userID int, token string) (string, error) {
+	action, err := s.pending.Claim(ctx, userID, token, time.Now())
 	if err != nil {
 		return "", err
 	}
 
 	switch action.Intent {
 	case models.IntentDeleteCategory:
-		return s.confirmDeleteCategory(userID, action)
+		return s.confirmDeleteCategory(ctx, userID, action)
 	case models.IntentUpdateCategory:
-		return s.confirmUpdateCategory(userID, action)
+		return s.confirmUpdateCategory(ctx, userID, action)
 	case models.IntentDeleteAccount:
-		return s.confirmDeleteAccount(userID, action)
+		return s.confirmDeleteAccount(ctx, userID, action)
 	case models.IntentUpdateAccount:
-		return s.confirmUpdateAccount(userID, action)
+		return s.confirmUpdateAccount(ctx, userID, action)
 	case models.IntentDeleteTransaction:
-		return s.confirmDeleteTransaction(userID, action)
+		return s.confirmDeleteTransaction(ctx, userID, action)
 	case models.IntentBudgetDelete:
-		return s.confirmDeleteBudget(userID, action)
+		return s.confirmDeleteBudget(ctx, userID, action)
 	case models.IntentBudgetUpdate:
-		return s.confirmUpdateBudget(userID, action)
+		return s.confirmUpdateBudget(ctx, userID, action)
 	case models.IntentUpdateTransaction:
-		return s.confirmUpdateTransaction(userID, action)
+		return s.confirmUpdateTransaction(ctx, userID, action)
 	default:
 		return "", fmt.Errorf("this action cannot be run via confirmation: %q", action.Intent)
 	}
@@ -52,27 +53,27 @@ func (s *ActionService) Confirm(userID int, token string) (string, error) {
 
 // --- kategori ---
 
-func (s *ActionService) confirmDeleteCategory(userID int, a *models.PendingAction) (string, error) {
-	cat, err := s.ownedCategory(userID, a.TargetID)
+func (s *ActionService) confirmDeleteCategory(ctx context.Context, userID int, a *models.PendingAction) (string, error) {
+	cat, err := s.ownedCategory(ctx, userID, a.TargetID)
 	if err != nil {
 		return "", err
 	}
 	// Yeniden kontrol: bu arada kullanıma girmiş olabilir.
-	used, err := s.txs.CountByCategory(cat.ID)
+	used, err := s.txs.CountByCategory(ctx, cat.ID)
 	if err != nil {
 		return "", err
 	}
 	if used > 0 {
 		return "", fmt.Errorf("%w (in %d transactions)", repositories.ErrCategoryInUse, used)
 	}
-	if err := s.categories.Delete(cat.ID); err != nil {
+	if err := s.categories.Delete(ctx, cat.ID); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("category %q deleted", cat.Name), nil
 }
 
-func (s *ActionService) confirmUpdateCategory(userID int, a *models.PendingAction) (string, error) {
-	cat, err := s.ownedCategory(userID, a.TargetID)
+func (s *ActionService) confirmUpdateCategory(ctx context.Context, userID int, a *models.PendingAction) (string, error) {
+	cat, err := s.ownedCategory(ctx, userID, a.TargetID)
 	if err != nil {
 		return "", err
 	}
@@ -84,7 +85,7 @@ func (s *ActionService) confirmUpdateCategory(userID int, a *models.PendingActio
 	if a.Params.CategoryType == "income" || a.Params.CategoryType == "expense" {
 		catType = a.Params.CategoryType
 	}
-	if err := s.categories.Update(cat.ID, name, catType); err != nil {
+	if err := s.categories.Update(ctx, cat.ID, name, catType); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("category updated: %q (%s)", name, catType), nil
@@ -92,8 +93,8 @@ func (s *ActionService) confirmUpdateCategory(userID int, a *models.PendingActio
 
 // ownedCategory — kaydı çeker ve GERÇEKTEN bu kullanıcının kişisel
 // kategorisi olduğunu doğrular. Global kategoriler değiştirilemez.
-func (s *ActionService) ownedCategory(userID, categoryID int) (*models.Category, error) {
-	cat, err := s.categories.GetByID(categoryID)
+func (s *ActionService) ownedCategory(ctx context.Context, userID, categoryID int) (*models.Category, error) {
+	cat, err := s.categories.GetByID(ctx, categoryID)
 	if err != nil {
 		return nil, err
 	}
@@ -108,33 +109,33 @@ func (s *ActionService) ownedCategory(userID, categoryID int) (*models.Category,
 
 // --- hesap ---
 
-func (s *ActionService) confirmDeleteAccount(userID int, a *models.PendingAction) (string, error) {
-	acc, err := s.accounts.GetByIDForUser(a.TargetID, userID)
+func (s *ActionService) confirmDeleteAccount(ctx context.Context, userID int, a *models.PendingAction) (string, error) {
+	acc, err := s.accounts.GetByIDForUser(ctx, a.TargetID, userID)
 	if err != nil {
 		return "", err
 	}
-	txs, err := s.txs.ListByAccount(acc.ID)
+	txs, err := s.txs.ListByAccount(ctx, acc.ID)
 	if err != nil {
 		return "", err
 	}
 	if len(txs) > 0 {
 		return "", fmt.Errorf("%w (%d transactions)", repositories.ErrAccountInUse, len(txs))
 	}
-	if err := s.accounts.Delete(acc.ID); err != nil {
+	if err := s.accounts.Delete(ctx, acc.ID); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("account %q deleted", acc.Name), nil
 }
 
-func (s *ActionService) confirmUpdateAccount(userID int, a *models.PendingAction) (string, error) {
-	acc, err := s.accounts.GetByIDForUser(a.TargetID, userID)
+func (s *ActionService) confirmUpdateAccount(ctx context.Context, userID int, a *models.PendingAction) (string, error) {
+	acc, err := s.accounts.GetByIDForUser(ctx, a.TargetID, userID)
 	if err != nil {
 		return "", err
 	}
 	if a.Params.Name == "" {
 		return "", validationErrorf("no new name provided")
 	}
-	if err := s.accounts.Update(acc.ID, a.Params.Name); err != nil {
+	if err := s.accounts.Update(ctx, acc.ID, a.Params.Name); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("account name updated to %q", a.Params.Name), nil
@@ -142,16 +143,16 @@ func (s *ActionService) confirmUpdateAccount(userID int, a *models.PendingAction
 
 // --- işlem ---
 
-func (s *ActionService) confirmDeleteTransaction(userID int, a *models.PendingAction) (string, error) {
-	tx, err := s.txs.GetByID(a.TargetID)
+func (s *ActionService) confirmDeleteTransaction(ctx context.Context, userID int, a *models.PendingAction) (string, error) {
+	tx, err := s.txs.GetByID(ctx, a.TargetID)
 	if err != nil {
 		return "", err
 	}
 	// İşlemin sahipliği bağlı olduğu hesaptan gelir — yeniden doğrula.
-	if _, err := s.accounts.GetByIDForUser(tx.AccountID, userID); err != nil {
+	if _, err := s.accounts.GetByIDForUser(ctx, tx.AccountID, userID); err != nil {
 		return "", repositories.ErrTransactionNotFound
 	}
-	if err := s.txs.Delete(tx.ID); err != nil {
+	if err := s.txs.Delete(ctx, tx.ID); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("transaction of %.2f TL %q deleted", tx.Amount, tx.Description), nil
@@ -171,13 +172,13 @@ func (s *ActionService) confirmDeleteTransaction(userID int, a *models.PendingAc
 // OLUŞTURMADAN FARKI: orada kategori uyumsuzsa alanı düşürüp kullanıcıya
 // sorabiliyorduk. Burada category_id NOT NULL ve zaten bir değeri var —
 // düşürecek yer yok. Bu yüzden kategori sorunları SERT HATA.
-func (s *ActionService) confirmUpdateTransaction(userID int, a *models.PendingAction) (string, error) {
-	tx, err := s.txs.GetByID(a.TargetID)
+func (s *ActionService) confirmUpdateTransaction(ctx context.Context, userID int, a *models.PendingAction) (string, error) {
+	tx, err := s.txs.GetByID(ctx, a.TargetID)
 	if err != nil {
 		return "", err
 	}
 	// Sahiplik işlemin bağlı olduğu hesaptan gelir — yeniden doğrula (TOCTOU).
-	if _, err := s.accounts.GetByIDForUser(tx.AccountID, userID); err != nil {
+	if _, err := s.accounts.GetByIDForUser(ctx, tx.AccountID, userID); err != nil {
 		return "", repositories.ErrTransactionNotFound
 	}
 
@@ -229,7 +230,7 @@ func (s *ActionService) confirmUpdateTransaction(userID int, a *models.PendingAc
 	// DİKKAT: yalnızca kategori değişmemiş olsa bile kontrol ediyoruz —
 	// çünkü TİP değişmiş olabilir ve eski kategori artık uyumsuz olabilir
 	// ("gider" işlemi "gelir"e çevrilirse Market kategorisi geçersizleşir).
-	categories, err := s.categories.GetForUser(userID)
+	categories, err := s.categories.GetForUser(ctx, userID)
 	if err != nil {
 		return "", err
 	}
@@ -248,7 +249,7 @@ func (s *ActionService) confirmUpdateTransaction(userID int, a *models.PendingAc
 			matched.Name, matched.Type, merged.Type)
 	}
 
-	if err := s.txs.Update(tx.ID, merged); err != nil {
+	if err := s.txs.Update(ctx, tx.ID, merged); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("transaction updated: %.2f TL %q (%s)",
@@ -262,8 +263,8 @@ func (s *ActionService) confirmUpdateTransaction(userID int, a *models.PendingAc
 // TOCTOU: token BELİRLİ bir bütçe için üretildi (TargetID). Bu arada kullanıcı
 // bütçesini silip YENİSİNİ kurmuş olabilir; o zaman GetForUser farklı bir
 // id döner. id eşleşmiyorsa token bayattır — yeni bütçeyi YANLIŞLIKLA silme.
-func (s *ActionService) confirmDeleteBudget(userID int, a *models.PendingAction) (string, error) {
-	budget, err := s.budgets.GetForUser(userID)
+func (s *ActionService) confirmDeleteBudget(ctx context.Context, userID int, a *models.PendingAction) (string, error) {
+	budget, err := s.budgets.GetForUser(ctx, userID)
 	if err != nil {
 		return "", err
 	}
@@ -271,7 +272,7 @@ func (s *ActionService) confirmDeleteBudget(userID int, a *models.PendingAction)
 		// Bütçe bu arada değişti: token'ın işaret ettiği bütçe artık yok.
 		return "", repositories.ErrBudgetNotFound
 	}
-	if err := s.budgets.Delete(budget.ID); err != nil {
+	if err := s.budgets.Delete(ctx, budget.ID); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("budget %q deleted", budget.Name), nil
@@ -282,15 +283,15 @@ func (s *ActionService) confirmDeleteBudget(userID int, a *models.PendingAction)
 // buildBudgetUpdate'i GÜNCEL duruma karşı yeniden çalıştırır: token beklerken
 // kategori silinmiş/eklenmiş olabilir, merge tazelenir. Sonra TargetID eşleşme
 // kontrolü (bütçe bu arada silinip yenisi kurulduysa reddet), sonra Replace.
-func (s *ActionService) confirmUpdateBudget(userID int, a *models.PendingAction) (string, error) {
-	input, budget, summary, err := s.buildBudgetUpdate(userID, a.Params)
+func (s *ActionService) confirmUpdateBudget(ctx context.Context, userID int, a *models.PendingAction) (string, error) {
+	input, budget, summary, err := s.buildBudgetUpdate(ctx, userID, a.Params)
 	if err != nil {
 		return "", err
 	}
 	if budget.ID != a.TargetID {
 		return "", repositories.ErrBudgetNotFound
 	}
-	if err := s.budgets.Replace(budget.ID, *input, budget.StartDate); err != nil {
+	if err := s.budgets.Replace(ctx, budget.ID, *input, budget.StartDate); err != nil {
 		return "", err
 	}
 	return "budget updated: " + summary, nil

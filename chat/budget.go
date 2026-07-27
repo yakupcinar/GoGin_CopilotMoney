@@ -3,6 +3,7 @@ package chat
 import (
 	"GoGinMoneyCopilot/models"
 	"GoGinMoneyCopilot/repositories"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -19,14 +20,14 @@ import (
 // Kullanıcı başına tek bütçe: bu dilim yalnızca OLUŞTURMAYI kapsar. Zaten
 // bütçe varsa oluşturma REST'te 409 olurdu; burada erkenden anlaşılır bir
 // mesajla durduruyoruz.
-func (s *ActionService) buildBudget(a *models.ParsedAction, req ChatRequest,
+func (s *ActionService) buildBudget(ctx context.Context, a *models.ParsedAction, req ChatRequest,
 	categories []models.Category, today time.Time) (*models.CreateBudgetInput, []string, []string, error) {
 
 	p := a.Params
 	var warnings, needsInput []string
 
 	// --- zaten bütçe var mı? (create -> varsa çakışma) ---
-	if _, err := s.budgets.GetForUser(req.UserID); err == nil {
+	if _, err := s.budgets.GetForUser(ctx, req.UserID); err == nil {
 		return nil, warnings, needsInput, fmt.Errorf(
 			"you already have a budget; use the budget panel to modify it")
 	} else if !errors.Is(err, repositories.ErrBudgetNotFound) {
@@ -111,18 +112,18 @@ func (s *ActionService) buildBudget(a *models.ParsedAction, req ChatRequest,
 // KAPSAM: kategori limiti ekle/değiştir + dönem/isim. Kategori ÇIKARMA ve
 // başlangıç tarihi bu dilimde yok (panelden; start_date dönemleri yeniden
 // dilimler, sessizce yapılmamalı).
-func (s *ActionService) buildBudgetUpdate(userID int, p models.ActionParams) (
+func (s *ActionService) buildBudgetUpdate(ctx context.Context, userID int, p models.ActionParams) (
 	*models.UpdateBudgetInput, *models.Budget, string, error) {
 
-	budget, err := s.budgets.GetForUser(userID)
+	budget, err := s.budgets.GetForUser(ctx, userID)
 	if err != nil {
 		return nil, nil, "", err // ErrBudgetNotFound dahil
 	}
-	lines, err := s.budgets.ListCategories(budget.ID)
+	lines, err := s.budgets.ListCategories(ctx, budget.ID)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	categories, err := s.categories.GetForUser(userID)
+	categories, err := s.categories.GetForUser(ctx, userID)
 	if err != nil {
 		return nil, nil, "", err
 	}
