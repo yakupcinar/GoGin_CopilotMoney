@@ -71,7 +71,7 @@ func TestLimit_Returns429WithRetryAfter(t *testing.T) {
 	rl := NewRateLimiter(60, 1)
 
 	r := gin.New()
-	r.GET("/x", rl.Limit(KeyByIP), func(c *gin.Context) {
+	r.GET("/x", Limit(rl, KeyByIP), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 

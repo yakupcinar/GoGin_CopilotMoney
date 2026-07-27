@@ -111,12 +111,12 @@ func main() {
 	r.Use(middleware.RequestLogger())
 	r.Use(gin.Recovery())
 
-	r.POST("/register", authLimiter.Limit(middleware.KeyByIP), authHandler.Register)
-	r.POST("/login", authLimiter.Limit(middleware.KeyByIP), authHandler.Login)
+	r.POST("/register", middleware.Limit(authLimiter, middleware.KeyByIP), authHandler.Register)
+	r.POST("/login", middleware.Limit(authLimiter, middleware.KeyByIP), authHandler.Login)
 
 	// /auth/refresh KORUMASIZ olmalı: buraya zaten access token'ın süresi
 	// dolduğu için geliyoruz. Kimlik doğrulaması refresh cookie'sinden gelir.
-	r.POST("/auth/refresh", authLimiter.Limit(middleware.KeyByIP), authHandler.Refresh)
+	r.POST("/auth/refresh", middleware.Limit(authLimiter, middleware.KeyByIP), authHandler.Refresh)
 
 	authorized := r.Group("/")
 	authorized.Use(middleware.AuthMiddleware(tokenRepo))
@@ -129,7 +129,7 @@ func main() {
 		// Chat: serbest metinden eylem üretir. Yıkıcı işlemler token'lı
 		// onay gerektirir; frontend "Emin misiniz?" popup'ında summary'yi
 		// gösterip token'ı /actions/confirm'e gönderir.
-		authorized.POST("/chat", chatLimiter.Limit(middleware.KeyByUser), chatHandler.Chat)
+		authorized.POST("/chat", middleware.Limit(chatLimiter, middleware.KeyByUser), chatHandler.Chat)
 		authorized.POST("/actions/confirm", chatHandler.Confirm)
 
 		accounts := authorized.Group("/accounts")

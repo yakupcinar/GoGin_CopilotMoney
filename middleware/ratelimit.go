@@ -25,6 +25,21 @@ import (
 // çalıştırılırsa her kopyanın kendi sayacı olur ve efektif limit kopya
 // sayısıyla çarpılır. O noktada Redis gibi paylaşımlı bir sayaç gerekir.
 
+// Limiter — hız sınırlamanın DEĞİŞEN kısmı: "bu anahtar için bir istek
+// harcanabilir mi?" Sayacın nerede tutulduğu (bellek / Redis) yalnızca burayı
+// etkiler.
+//
+// NEDEN SADECE TEK METOT: Limit() HTTP cevabı yazar, depolamayla ilgisi yoktur
+// ve her implementasyonda kopyalanmamalı; Sweep/StartSweeper ise yalnızca
+// bellek implementasyonuna aittir (Redis'te TTL o işi yapar). Interface,
+// değişen davranış kadar küçük olmalı — büyüdükçe soyutlama zayıflar.
+type Limiter interface {
+	Allow(key string) bool
+}
+
+// Derleme zamanı kontrolü.
+var _ Limiter = (*RateLimiter)(nil)
+
 type visitor struct {
 	limiter  *rate.Limiter
 	lastSeen time.Time
@@ -114,10 +129,14 @@ func KeyByUser(c *gin.Context) string {
 	return "ip:" + c.ClientIP() // güvenli geri düşüş
 }
 
-// Limit — gin middleware'i üretir.
-func (rl *RateLimiter) Limit(keyFn func(*gin.Context) string) gin.HandlerFunc {
+// Limit — verilen Limiter'ı kullanan gin middleware'i üretir.
+//
+// Metot değil PAKET FONKSİYONU: HTTP cevabı (429 + Retry-After + Abort) her
+// implementasyon için AYNI. Interface'e koysaydık her sayaç bu mantığı yeniden
+// yazmak ve gin'i import etmek zorunda kalırdı.
+func Limit(l Limiter, keyFn func(*gin.Context) string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !rl.Allow(keyFn(c)) {
+		if !l.Allow(keyFn(c)) {
 			// Retry-After: istemciye ne zaman tekrar deneyeceğini söyle.
 			// Olmadan istemciler agresif biçimde yeniden dener ve durumu kötüleştirir.
 			c.Header("Retry-After", "60")
