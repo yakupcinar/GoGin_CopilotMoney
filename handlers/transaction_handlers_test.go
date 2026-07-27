@@ -125,13 +125,13 @@ func TestListAccountTransactions_OnlyThatAccount(t *testing.T) {
 		Total        int64                `json:"total"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("cevap parse edilemedi: %v", err)
+		t.Fatalf("response could not be parsed: %v", err)
 	}
 	if len(got.Transactions) != 2 {
-		t.Fatalf("hesap 1 için 2 işlem bekleniyordu, gelen %d", len(got.Transactions))
+		t.Fatalf("expected 2 transactions for account 1, got %d", len(got.Transactions))
 	}
 	if got.Total != 2 {
-		t.Fatalf("toplam 2 bekleniyordu, gelen %d", got.Total)
+		t.Fatalf("expected total 2, got %d", got.Total)
 	}
 }
 
@@ -148,7 +148,7 @@ func TestListAccountTransactions_Pagination(t *testing.T) {
 	w := performRequest(r, "GET", "/accounts/1/transactions?page=1&page_size=1", "")
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d", w.Code)
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	var got struct {
 		Transactions []models.Transaction `json:"transactions"`
@@ -156,13 +156,13 @@ func TestListAccountTransactions_Pagination(t *testing.T) {
 		PageSize     int                  `json:"page_size"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("cevap parse edilemedi: %v", err)
+		t.Fatalf("response could not be parsed: %v", err)
 	}
 	if len(got.Transactions) != 1 {
-		t.Fatalf("page_size=1 ile 1 işlem bekleniyordu, gelen %d", len(got.Transactions))
+		t.Fatalf("expected 1 transaction with page_size=1, got %d", len(got.Transactions))
 	}
 	if got.Total != 2 {
-		t.Fatalf("total gerçek sayıyı (2) göstermeliydi, gelen %d", got.Total)
+		t.Fatalf("total should reflect the real count (2), got %d", got.Total)
 	}
 }
 
