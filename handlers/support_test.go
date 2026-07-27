@@ -357,6 +357,19 @@ func (r *fakeTransactionRepo) CountByCategory(ctx context.Context, categoryID in
 	return n, nil
 }
 
+func (r *fakeTransactionRepo) CountByAccount(ctx context.Context, accountID int) (int64, error) {
+	if err := r.injected("CountByAccount"); err != nil {
+		return 0, err
+	}
+	var n int64
+	for _, tx := range r.transactions {
+		if tx.AccountID == accountID {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // SumExpenseByCategory — gerçek SQL'in mantığını BİREBİR yansıtır: sadece
 // expense, sadece verilen hesaplar, yarı açık [from, to) aralığı. Aksi halde
 // sınır testleri sorguyu değil sahteyi test etmiş olur.

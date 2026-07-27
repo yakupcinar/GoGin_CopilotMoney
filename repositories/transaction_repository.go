@@ -21,6 +21,10 @@ type TransactionRepository interface {
 	// birkaç bin işlem) sorun değil, keyset pagination gerekmez.
 	ListByAccountPaged(ctx context.Context, accountID, page, pageSize int) ([]models.Transaction, int64, error)
 	CountByCategory(ctx context.Context, categoryID int) (int64, error)
+	// CountByAccount — bir hesaptaki işlem sayısı. Silme kontrolü için
+	// kullanılır; satır verisine ihtiyaç yoktur, o yüzden ListByAccount
+	// yerine bu tercih edilmelidir (COUNT(*), veri ağdan geçmez).
+	CountByAccount(ctx context.Context, accountID int) (int64, error)
 	SumExpenseByCategory(ctx context.Context, accountIDs []int, from, to time.Time) (map[int]float64, error)
 	Update(ctx context.Context, transactionID int, input models.UpdateTransactionInput) error
 	Delete(ctx context.Context, transactionID int) error
@@ -95,6 +99,21 @@ func (r *gormTransactionRepository) CountByCategory(ctx context.Context, categor
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&models.Transaction{}).
 		Where("category_id = ?", categoryID).Count(&count).Error; err != nil {
+		return 0, fmt.Errorf("Transaction count couldn't be fetched: %v", err)
+	}
+	return count, nil
+}
+
+// CountByAccount — bir hesaptaki işlem sayısı.
+//
+// NEDEN AYRI (ListByAccount yerine): silme kontrolü sadece SAYIYA ihtiyaç
+// duyar ("bu hesapta 47 işlem var, silinemez"). ListByAccount tüm satırları
+// (tutar, tarih, açıklama...) çekip len() ile sayardı — gereksiz veri
+// transferi. COUNT(*) veritabanında hesaplanır, tek bir sayı döner.
+func (r *gormTransactionRepository) CountByAccount(ctx context.Context, accountID int) (int64, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&models.Transaction{}).
+		Where("account_id = ?", accountID).Count(&count).Error; err != nil {
 		return 0, fmt.Errorf("Transaction count couldn't be fetched: %v", err)
 	}
 	return count, nil

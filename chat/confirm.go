@@ -114,12 +114,12 @@ func (s *ActionService) confirmDeleteAccount(ctx context.Context, userID int, a 
 	if err != nil {
 		return "", err
 	}
-	txs, err := s.txs.ListByAccount(ctx, acc.ID)
+	txCount, err := s.txs.CountByAccount(ctx, acc.ID)
 	if err != nil {
 		return "", err
 	}
-	if len(txs) > 0 {
-		return "", fmt.Errorf("%w (%d transactions)", repositories.ErrAccountInUse, len(txs))
+	if txCount > 0 {
+		return "", fmt.Errorf("%w (%d transactions)", repositories.ErrAccountInUse, txCount)
 	}
 	if err := s.accounts.Delete(ctx, acc.ID); err != nil {
 		return "", err

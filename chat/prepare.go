@@ -58,22 +58,22 @@ func (s *ActionService) prepareAccountAction(ctx context.Context, res *Result, a
 		return
 	}
 
-	txs, err := s.txs.ListByAccount(ctx, acc.ID)
+	txCount, err := s.txs.CountByAccount(ctx, acc.ID)
 	if err != nil {
 		res.Error = "failed to check account transactions"
 		return
 	}
 
-	if a.Intent == models.IntentDeleteAccount && len(txs) > 0 {
+	if a.Intent == models.IntentDeleteAccount && txCount > 0 {
 		res.Error = fmt.Sprintf(
 			"account %q has %d transactions and cannot be deleted. Delete the transactions first.",
-			acc.Name, len(txs))
+			acc.Name, txCount)
 		return
 	}
 
 	summary := fmt.Sprintf("%s: account %q (id=%d)", verbOf(a.Intent), acc.Name, acc.ID)
-	if len(txs) > 0 {
-		summary += fmt.Sprintf(" — contains %d transactions", len(txs))
+	if txCount > 0 {
+		summary += fmt.Sprintf(" — contains %d transactions", txCount)
 	}
 	if a.Intent == models.IntentUpdateAccount && a.Params.Name != "" {
 		summary += fmt.Sprintf(" → new name: %q", a.Params.Name)
