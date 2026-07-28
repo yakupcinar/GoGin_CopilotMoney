@@ -10,6 +10,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// DefaultWarmUpInterval — StartWarmUpLoop için varsayılan. ACCESS_TOKEN_TTL'den
+// (varsayılan 15dk) kısa tutuluyor ki Redis kendi başına restart olduğunda
+// "nöbetçi yok -> Postgres'e düş" penceresi kısa kalsın.
+const DefaultWarmUpInterval = 5 * time.Minute
+
 // Access token denylist'inin Redis kopyası.
 //
 // TASARIM: Redis burada bir CACHE değil, kaynağın TAM KOPYASI. Fark önemli —
@@ -36,6 +41,12 @@ const (
 	//
 	// (Redis'in "Sentinel" adlı yüksek-erişilebilirlik ürünüyle ilgisi yoktur.)
 	denylistWarmKey = "denylist:warm"
+
+	// denylistLockKey — LİDER KİLİDİ. Çok kopyalı dağıtımda her kopya kendi
+	// StartWarmUpLoop goroutine'ini bağımsız çalıştırır; kilit olmadan N
+	// kopya her turda AYNI Postgres sorgusunu N kez atar ve Redis'e aynı
+	// veriyi N kez yazar — yanlış değil, sadece israf.
+	denylistLockKey = "denylist:warmup:lock"
 )
 
 type redisTokenRepository struct {
@@ -137,4 +148,58 @@ func WarmUpDenylist(ctx context.Context, rdb *redis.Client, source TokenReposito
 		return 0, fmt.Errorf("denylist warm-up failed: %w", err)
 	}
 	return loaded, nil
+}
+
+// StartWarmUpLoop — WarmUpDenylist'i periyodik olarak tekrar çalıştırır.
+//
+// NEDEN GEREKLİ: nöbetçi yalnızca UYGULAMA AÇILIŞINDA yazılıyordu. Redis
+// uygulama AYAKTAYKEN kendi başına restart olursa (bakım, bellek yetersizliği)
+// veri gider ama uygulama bunu asla öğrenmez — nöbetçi bir daha yazılmadığı
+// için okumalar SÜRESİZ olarak Postgres'e düşer. Bu döngü, düşme süresini
+// interval ile sınırlıyor: en kötü ihtimalle bir sonraki tur kadar bekler.
+//
+// interval <= 0 verilirse DefaultWarmUpInterval kullanılır.
+// stop kapanınca döngü sonlanır (Cleaner.Start ve RateLimiter.StartSweeper
+// ile aynı desen).
+func StartWarmUpLoop(rdb *redis.Client, source TokenRepository, interval time.Duration, stop <-chan struct{}) {
+	if interval <= 0 {
+		interval = DefaultWarmUpInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			runWarmUpIfLeader(ctx, rdb, source, interval, time.Now())
+			cancel()
+		}
+	}
+}
+
+// runWarmUpIfLeader — SET NX ile YALNIZCA BİR kopyanın bu turu çalıştırmasını
+// sağlar. Kilidi alamayan kopyalar sessizce atlar; bu bir hata değil, "başka
+// biri zaten yapıyor" demek.
+//
+// Kilidin TTL'i interval kadar: kilidi alan kopya çökse bile bir sonraki
+// turu başka bir kopya devralır. Kimin aldığı önemli değil, yalnızca birinin
+// alması önemli.
+func runWarmUpIfLeader(ctx context.Context, rdb *redis.Client, source TokenRepository, interval time.Duration, now time.Time) {
+	acquired, err := rdb.SetNX(ctx, denylistLockKey, 1, interval).Result()
+	if err != nil {
+		// Kilit kontrolü başarısız: riske girmeden atla. Bir sonraki tur
+		// yine dener; tek bir kaçırılmış tur ölümcül değil.
+		log.Println("denylist warm-up: lock check failed, skipping this turn:", err)
+		return
+	}
+	if !acquired {
+		return // başka bir kopya bu turu üstlendi
+	}
+
+	if _, err := WarmUpDenylist(ctx, rdb, source, now); err != nil {
+		log.Println("denylist warm-up (periodic) failed:", err)
+	}
 }

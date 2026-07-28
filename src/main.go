@@ -59,6 +59,10 @@ func main() {
 	budgetRepo := repositories.NewBudgetRepository(database.DB)
 	tokenRepo := repositories.NewTokenRepository(database.DB)
 
+	// Arka plan döngülerinin (sweeper'lar, denylist yeniden-ısıtma) paylaştığı
+	// tek kapatma sinyali; graceful shutdown'da close(sweeperStop) ile durur.
+	sweeperStop := make(chan struct{})
+
 	// Redis varsa denylist'in TAM KOPYASI orada tutulur; her istekteki
 	// "bu token iptal mi" sorusu Postgres yerine bellekten cevaplanır.
 	//
@@ -74,6 +78,15 @@ func main() {
 		} else {
 			log.Printf("denylist warm-up: %d active revocation(s) loaded into redis", n)
 		}
+
+		// PERİYODİK TEKRAR: nöbetçi yalnızca AÇILIŞTA yazılıyordu. Redis
+		// uygulama AYAKTAYKEN kendi başına restart olursa (bakım, OOM) veri
+		// gider ama uygulama bunu asla öğrenmez; nöbetçi bir daha
+		// yazılmadığı için okumalar SÜRESİZ olarak Postgres'e düşer. Bu
+		// döngü düşme süresini birkaç dakikayla sınırlıyor.
+		go repositories.StartWarmUpLoop(database.RDB, tokenRepo,
+			repositories.DefaultWarmUpInterval, sweeperStop)
+
 		tokenRepo = repositories.NewRedisTokenRepository(database.RDB, tokenRepo)
 	}
 	pendingRepo := repositories.NewPendingActionRepository(database.DB)
@@ -107,7 +120,6 @@ func main() {
 	// Bellekteki sayaçlar HER ZAMAN kurulur: Redis varsa yedek, yoksa asıl.
 	authMem := middleware.NewRateLimiter(authPerMin, 5)
 	chatMem := middleware.NewRateLimiter(chatPerMin, 5)
-	sweeperStop := make(chan struct{})
 	go authMem.StartSweeper(sweeperStop)
 	go chatMem.StartSweeper(sweeperStop)
 
