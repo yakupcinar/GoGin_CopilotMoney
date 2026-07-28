@@ -38,8 +38,31 @@ type Limiter interface {
 	Allow(ctx context.Context, key string) bool
 }
 
-// Derleme zamanı kontrolü.
-var _ Limiter = (*RateLimiter)(nil)
+// PlanAwareLimiter — abonelik planına göre EŞİĞİ ÇAĞIRAN TARAF belirlediğinde
+// gereken ikinci, küçük arayüz.
+//
+// NEDEN AYRI (Limiter'a eklenmedi): /login ve /register için eşik sabit
+// (AUTH_RATE_PER_MIN) — herkese aynı, planla ilgisi yok. /chat için eşik
+// KULLANICININ PLANINA göre değişir (free/pro). Limiter'ın imzasına perMinute
+// eklemek, plana hiç ihtiyacı olmayan auth limiter'ı da gereksiz yere
+// değiştirirdi. Interface, değişen davranış kadar küçük olmalı (Bölüm 28).
+type PlanAwareLimiter interface {
+	AllowWithLimit(ctx context.Context, key string, perMinute int) bool
+}
+
+// FullLimiter — her iki arayüzü de karşılayan implementasyonlar için.
+// Yalnızca constructor dönüş tiplerinde kullanılır; çağıran taraf ihtiyacına
+// göre Limiter ya da PlanAwareLimiter olarak daraltır.
+type FullLimiter interface {
+	Limiter
+	PlanAwareLimiter
+}
+
+// Derleme zamanı kontrolleri.
+var (
+	_ Limiter          = (*RateLimiter)(nil)
+	_ PlanAwareLimiter = (*RateLimiter)(nil)
+)
 
 type visitor struct {
 	limiter  *rate.Limiter
@@ -72,7 +95,7 @@ func NewRateLimiter(perMinute int, burst int) *RateLimiter {
 	}
 }
 
-// Allow — anahtar için bir istek harcamayı dener.
+// Allow — anahtar için bir istek harcamayı dener, kurucudaki sabit limitle.
 //
 // ctx kullanılmıyor: sayaç bellekte, bloklama yok. İmzada olmasının sebebi
 // başka implementasyonların (Redis) ağ üzerinden gitmesi.
@@ -84,6 +107,32 @@ func (rl *RateLimiter) Allow(_ context.Context, key string) bool {
 	if !ok {
 		v = &visitor{limiter: rate.NewLimiter(rl.limit, rl.burst)}
 		rl.visitors[key] = v
+	}
+	v.lastSeen = time.Now()
+	return v.limiter.Allow()
+}
+
+// AllowWithLimit — Allow ile aynı, ama eşik ÇAĞIRAN TARAFTAN gelir (plana
+// göre değişir), kurucudaki sabit rl.limit'ten değil.
+//
+// Aynı anahtarın rate.Limiter'ı yeniden kullanılır (SetLimit ucuzdur, yeni
+// oran hemen uygulanır) — kullanıcı planını yükseltirse bir sonraki istekte
+// yeni hız devreye girer, eski bucket'ı atıp yeniden oluşturmaya gerek yok.
+func (rl *RateLimiter) AllowWithLimit(_ context.Context, key string, perMinute int) bool {
+	if perMinute <= 0 {
+		perMinute = 1
+	}
+	limit := rate.Every(time.Minute / time.Duration(perMinute))
+
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	v, ok := rl.visitors[key]
+	if !ok {
+		v = &visitor{limiter: rate.NewLimiter(limit, rl.burst)}
+		rl.visitors[key] = v
+	} else {
+		v.limiter.SetLimit(limit)
 	}
 	v.lastSeen = time.Now()
 	return v.limiter.Allow()
@@ -141,12 +190,47 @@ func KeyByUser(c *gin.Context) string {
 func Limit(l Limiter, keyFn func(*gin.Context) string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !l.Allow(c.Request.Context(), keyFn(c)) {
-			// Retry-After: istemciye ne zaman tekrar deneyeceğini söyle.
-			// Olmadan istemciler agresif biçimde yeniden dener ve durumu kötüleştirir.
-			c.Header("Retry-After", "60")
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": "Too many requests, please slow down"})
-			c.Abort()
+			tooManyRequests(c)
+			return
+		}
+		c.Next()
+	}
+}
+
+// tooManyRequests — Limit ve LimitByPlan'ın paylaştığı 429 cevabı.
+func tooManyRequests(c *gin.Context) {
+	// Retry-After: istemciye ne zaman tekrar deneyeceğini söyle.
+	// Olmadan istemciler agresif biçimde yeniden dener ve durumu kötüleştirir.
+	c.Header("Retry-After", "60")
+	c.JSON(http.StatusTooManyRequests, gin.H{
+		"error": "Too many requests, please slow down"})
+	c.Abort()
+}
+
+// LimitByPlan — abonelik planına göre değişen eşikli gin middleware'i üretir.
+//
+// planFn HER İSTEKTE çağrılır (taze okuma) — kullanıcının planı yükseltilir
+// yükseltilmez yeni limit uygulanır, token yenilenmesini beklemez. Bunun
+// bedeli: her /chat isteği bir kullanıcı sorgusu daha yapar. Kabul edilebilir,
+// çünkü chat isteği zaten kategori/hesap için veritabanına gidiyor.
+//
+// planFn hata dönerse ya da plan haritada yoksa defaultLimit kullanılır.
+// defaultLimit EN KISITLAYICI (free) katman olmalı: bir veritabanı arızasında
+// "cömert davran" değil "tutucu davran" — bu limitin amacı maliyeti korumak,
+// arıza anında maliyeti serbest bırakmak yanlış taraf olurdu.
+func LimitByPlan(l PlanAwareLimiter, keyFn func(*gin.Context) string,
+	planFn func(*gin.Context) (string, error), limits map[string]int, defaultLimit int) gin.HandlerFunc {
+
+	return func(c *gin.Context) {
+		limit := defaultLimit
+		if plan, err := planFn(c); err == nil {
+			if v, ok := limits[plan]; ok {
+				limit = v
+			}
+		}
+
+		if !l.AllowWithLimit(c.Request.Context(), keyFn(c), limit) {
+			tooManyRequests(c)
 			return
 		}
 		c.Next()

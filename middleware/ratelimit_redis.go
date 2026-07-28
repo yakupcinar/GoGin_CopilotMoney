@@ -41,7 +41,7 @@ type redisLimiter struct {
 	warnOnce sync.Once
 }
 
-func NewRedisLimiter(rdb *redis.Client, namespace string, perMinute int, fallback Limiter) Limiter {
+func NewRedisLimiter(rdb *redis.Client, namespace string, perMinute int, fallback Limiter) FullLimiter {
 	if perMinute <= 0 {
 		perMinute = 60
 	}
@@ -53,10 +53,16 @@ func NewRedisLimiter(rdb *redis.Client, namespace string, perMinute int, fallbac
 	}
 }
 
-// Derleme zamanı kontrolü.
-var _ Limiter = (*redisLimiter)(nil)
+// Derleme zamanı kontrolleri.
+var (
+	_ Limiter          = (*redisLimiter)(nil)
+	_ PlanAwareLimiter = (*redisLimiter)(nil)
+)
 
-func (l *redisLimiter) Allow(ctx context.Context, key string) bool {
+// incrementAndCheck — Allow ve AllowWithLimit'in PAYLAŞTIĞI çekirdek: INCR +
+// EXPIRE tek gidiş-dönüşte, eşikle karşılaştır. Tek fark eşiğin nereden
+// geldiği (sabit vs çağıran taraf) — mantığın kendisi tekrarlanmamalı.
+func (l *redisLimiter) incrementAndCheck(ctx context.Context, key string, perMinute int) (allowed bool, err error) {
 	// Kısa zaman aşımı: Redis takılırsa her istek onu beklemesin.
 	// İsteğin kendi context'inden türetiliyor, yani istemci koparsa bu da düşer.
 	ctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
@@ -78,11 +84,36 @@ func (l *redisLimiter) Allow(ctx context.Context, key string) bool {
 	pipe.Expire(ctx, k, 70*time.Second)
 
 	if _, err := pipe.Exec(ctx); err != nil {
+		return false, err
+	}
+	return incr.Val() <= int64(perMinute), nil
+}
+
+func (l *redisLimiter) Allow(ctx context.Context, key string) bool {
+	allowed, err := l.incrementAndCheck(ctx, key, l.perMinute)
+	if err != nil {
 		l.warnOnce.Do(func() {
 			log.Println("ratelimit: redis unavailable, falling back to in-process counter:", err)
 		})
 		return l.fallback.Allow(ctx, key)
 	}
+	return allowed
+}
 
-	return incr.Val() <= int64(l.perMinute)
+// AllowWithLimit — Allow ile aynı, ama eşik ÇAĞIRAN TARAFTAN gelir (plana
+// göre değişir). Yedeğe düşerken de plana saygı gösterilir: fallback ayrıca
+// PlanAwareLimiter'sa (RateLimiter zaten öyle) aynı eşikle çağrılır; değilse
+// fallback'in kendi sabit eşiğine düşülür.
+func (l *redisLimiter) AllowWithLimit(ctx context.Context, key string, perMinute int) bool {
+	allowed, err := l.incrementAndCheck(ctx, key, perMinute)
+	if err != nil {
+		l.warnOnce.Do(func() {
+			log.Println("ratelimit: redis unavailable, falling back to in-process counter:", err)
+		})
+		if pal, ok := l.fallback.(PlanAwareLimiter); ok {
+			return pal.AllowWithLimit(ctx, key, perMinute)
+		}
+		return l.fallback.Allow(ctx, key)
+	}
+	return allowed
 }

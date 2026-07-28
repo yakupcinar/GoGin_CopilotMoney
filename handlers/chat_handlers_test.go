@@ -15,15 +15,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Chat akışının testleri.
+// Tests for the chat flow.
 //
-// KAPSAM: handler + chat.ActionService BİRLİKTE test ediliyor. Yalnızca AI
-// sahte — repository'ler de sahte ama gerçek servis mantığından geçiliyor.
-// Yani beyaz liste, sahiplik kontrolü, doğrulama katmanı ve onay akışının
-// tamamı gerçekten çalışıyor.
+// SCOPE: handler + chat.ActionService are tested TOGETHER. Only the AI is
+// fake — the repositories are fake too, but the real service logic runs.
+// So the whitelist, ownership checks, validation layer, and confirmation
+// flow all genuinely execute.
 //
-// Modelin çıktısını tam kontrol edebildiğimiz için "model saçmalarsa ne olur"
-// senaryolarını deterministik biçimde test edebiliyoruz.
+// Since we fully control the model's output, we can deterministically test
+// "what happens if the model talks nonsense" scenarios.
 
 type chatFixture struct {
 	router     *gin.Engine
@@ -75,17 +75,17 @@ func newChatFixture(t *testing.T, actions ...models.ParsedAction) *chatFixture {
 	return &chatFixture{r, parser, accounts, categories, txs, budgets, pending}
 }
 
-// firstResult — cevaptaki ilk eylemi çözer.
+// firstResult — resolves the first action in the response.
 func firstResult(t *testing.T, w *httptest.ResponseRecorder) chat.Result {
 	t.Helper()
 	var body struct {
 		Results []chat.Result `json:"results"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatalf("cevap parse edilemedi: %v (%s)", err, w.Body.String())
+		t.Fatalf("response could not be parsed: %v (%s)", err, w.Body.String())
 	}
 	if len(body.Results) == 0 {
-		t.Fatalf("sonuç yok: %s", w.Body.String())
+		t.Fatalf("no results: %s", w.Body.String())
 	}
 	return body.Results[0]
 }
@@ -97,7 +97,7 @@ func txAction(params models.ActionParams) models.ParsedAction {
 }
 
 // ---------------------------------------------------------------------------
-// Girdi sınırları — AI'a GİTMEDEN önce
+// Input boundaries — BEFORE reaching the AI
 // ---------------------------------------------------------------------------
 
 func TestChat_EmptyText_Returns400(t *testing.T) {
@@ -106,10 +106,10 @@ func TestChat_EmptyText_Returns400(t *testing.T) {
 	w := performRequest(f.router, "POST", "/chat", `{"text":""}`)
 
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("beklenen 400, gelen %d", w.Code)
+		t.Fatalf("expected 400, got %d", w.Code)
 	}
 	if f.parser.calls != 0 {
-		t.Fatal("boş metin için AI çağrıldı — boşuna token harcanıyor")
+		t.Fatal("AI was called for empty text — wasting tokens for nothing")
 	}
 }
 
@@ -120,14 +120,14 @@ func TestChat_TooLongText_RejectedBeforeAICall(t *testing.T) {
 		`{"text":"`+strings.Repeat("a", 600)+`"}`)
 
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("beklenen 400, gelen %d", w.Code)
+		t.Fatalf("expected 400, got %d", w.Code)
 	}
 	if f.parser.calls != 0 {
-		t.Fatal("çok uzun metin için AI çağrıldı")
+		t.Fatal("AI was called for overly long text")
 	}
 }
 
-// AI servisi çökerse 500 DEĞİL 503: bu bizim hatamız değil, dış bağımlılığın.
+// If the AI service goes down it's 503, NOT 500: this is not our fault, it's the external dependency's.
 func TestChat_ParserFailure_Returns503(t *testing.T) {
 	f := newChatFixture(t)
 	f.parser.err = errors.New("groq erişilemiyor")
@@ -135,14 +135,14 @@ func TestChat_ParserFailure_Returns503(t *testing.T) {
 	w := performRequest(f.router, "POST", "/chat", `{"text":"kahve 50 tl"}`)
 
 	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("beklenen 503, gelen %d (%s)", w.Code, w.Body.String())
+		t.Fatalf("expected 503, got %d (%s)", w.Code, w.Body.String())
 	}
 	if strings.Contains(w.Body.String(), "groq") {
-		t.Fatal("iç hata detayı client'a sızdı")
+		t.Fatal("internal error detail leaked to the client")
 	}
 }
 
-// GROQ_API_KEY yoksa servis nil olur — 404 değil, açıklayıcı 503.
+// If GROQ_API_KEY is missing the service is nil — not 404, an explanatory 503.
 func TestChat_ServiceNotConfigured_Returns503(t *testing.T) {
 	h := NewChatHandler(nil)
 	r := gin.New()
@@ -152,12 +152,12 @@ func TestChat_ServiceNotConfigured_Returns503(t *testing.T) {
 	w := performRequest(r, "POST", "/chat", `{"text":"kahve"}`)
 
 	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("beklenen 503, gelen %d", w.Code)
+		t.Fatalf("expected 503, got %d", w.Code)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Beyaz liste — modelin uydurduğu niyet ASLA çalışmaz
+// Whitelist — an intent the model makes up NEVER works
 // ---------------------------------------------------------------------------
 
 func TestChat_UnknownIntent_Rejected(t *testing.T) {
@@ -173,20 +173,20 @@ func TestChat_UnknownIntent_Rejected(t *testing.T) {
 	}
 	json.Unmarshal(w.Body.Bytes(), &body)
 	if len(body.Results) != 2 {
-		t.Fatalf("2 sonuç bekleniyordu, gelen %d", len(body.Results))
+		t.Fatalf("expected 2 results, got %d", len(body.Results))
 	}
 	for i, r := range body.Results {
 		if r.Error == "" {
-			t.Fatalf("eylem %d reddedilmedi: %+v", i+1, r)
+			t.Fatalf("action %d was not rejected: %+v", i+1, r)
 		}
 		if r.Payload != nil || r.Token != "" {
-			t.Fatalf("izinsiz niyet için payload/token üretildi: %+v", r)
+			t.Fatalf("payload/token was produced for an unauthorized intent: %+v", r)
 		}
 	}
 }
 
 // ---------------------------------------------------------------------------
-// İşlem oluşturma — doğrulama katmanı
+// Transaction creation — validation layer
 // ---------------------------------------------------------------------------
 
 func TestChat_CreateTransaction_ProducesPayload(t *testing.T) {
@@ -200,22 +200,22 @@ func TestChat_CreateTransaction_ProducesPayload(t *testing.T) {
 
 	res := firstResult(t, w)
 	if res.Error != "" {
-		t.Fatalf("beklenmeyen hata: %s", res.Error)
+		t.Fatalf("unexpected error: %s", res.Error)
 	}
 	payload, _ := json.Marshal(res.Payload)
 	var input models.CreateTransactionInput
 	json.Unmarshal(payload, &input)
 
-	// account_id MODELDEN gelmiyor — istekten/varsayılandan geliyor.
+	// account_id does NOT come from the model — it comes from the request/default.
 	if input.AccountID != chatAccountID {
-		t.Fatalf("account_id yanlış: %d", input.AccountID)
+		t.Fatalf("account_id is wrong: %d", input.AccountID)
 	}
 	if input.Amount != 50.5 {
-		t.Fatalf("tutar yanlış: %v", input.Amount)
+		t.Fatalf("amount is wrong: %v", input.Amount)
 	}
 }
 
-// Model tutar bulamazsa 0 yazar (alan zorunlu). Bu düzeltilemez -> reddet.
+// If the model can't find an amount it writes 0 (field is required). This cannot be fixed -> reject.
 func TestChat_ZeroAmount_Rejected(t *testing.T) {
 	catID := 1
 	f := newChatFixture(t, txAction(models.ActionParams{
@@ -227,14 +227,14 @@ func TestChat_ZeroAmount_Rejected(t *testing.T) {
 
 	res := firstResult(t, w)
 	if res.Error == "" {
-		t.Fatal("tutar 0 iken taslak üretildi")
+		t.Fatal("a draft was produced while amount was 0")
 	}
 	if res.Payload != nil {
-		t.Fatal("geçersiz tutarla payload üretildi")
+		t.Fatal("payload was produced with an invalid amount")
 	}
 }
 
-// Model listede OLMAYAN kategori önerirse: düşür + uyar (reddetme).
+// If the model suggests a category NOT in the list: drop + warn (don't reject).
 func TestChat_UnknownCategory_DroppedWithWarning(t *testing.T) {
 	bogus := 999
 	f := newChatFixture(t, txAction(models.ActionParams{
@@ -246,23 +246,23 @@ func TestChat_UnknownCategory_DroppedWithWarning(t *testing.T) {
 
 	res := firstResult(t, w)
 	if res.Payload != nil {
-		t.Fatal("uydurma kategoriyle payload üretildi")
+		t.Fatal("payload was produced with a made-up category")
 	}
 	if len(res.NeedsInput) == 0 {
-		t.Fatal("category_id eksik olarak işaretlenmedi")
+		t.Fatal("category_id was not marked as missing")
 	}
 	if len(res.Warnings) == 0 {
-		t.Fatal("kullanıcıya uyarı verilmedi")
+		t.Fatal("no warning was given to the user")
 	}
 }
 
-// GERÇEK GÖZLEMLENEN HATA: model "geçen salı"yı 2024 olarak çözdü.
-// Tarih penceresi bunu yakalamalı ve bugüne çekmeli.
+// ACTUAL OBSERVED BUG: the model resolved "last Tuesday" as 2024.
+// The date window must catch this and clamp it to today.
 func TestChat_StaleYear_ClampedToToday(t *testing.T) {
 	catID := 1
 	f := newChatFixture(t, txAction(models.ActionParams{
 		Amount: 145, Type: "expense", Description: "taksi",
-		CategoryID: &catID, TransactionDate: "2020-07-16", // çok geride
+		CategoryID: &catID, TransactionDate: "2020-07-16", // too far in the past
 	}))
 
 	w := performRequest(f.router, "POST", "/chat", `{"text":"geçen salı taksi 145"}`)
@@ -273,15 +273,15 @@ func TestChat_StaleYear_ClampedToToday(t *testing.T) {
 	json.Unmarshal(payload, &input)
 
 	if input.TransactionDate.Year() == 2020 {
-		t.Fatal("eski yıl geçti — tarih penceresi çalışmıyor")
+		t.Fatal("the stale year got through — date window is not working")
 	}
 	if len(res.Warnings) == 0 {
-		t.Fatal("tarih düzeltildi ama kullanıcı bilgilendirilmedi")
+		t.Fatal("date was corrected but the user was not informed")
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Sahiplik — başkasının kaydına erişilemez
+// Ownership — another user's record cannot be accessed
 // ---------------------------------------------------------------------------
 
 func TestChat_ForeignAccount_Rejected(t *testing.T) {
@@ -295,14 +295,14 @@ func TestChat_ForeignAccount_Rejected(t *testing.T) {
 
 	res := firstResult(t, w)
 	if res.Error == "" {
-		t.Fatal("başkasının hesabına erişim reddedilmedi")
+		t.Fatal("access to another user's account was not rejected")
 	}
 	if res.Data != nil {
-		t.Fatal("başkasının hesap verisi sızdı")
+		t.Fatal("another user's account data leaked")
 	}
 }
 
-// Global kategoriler (UserID == nil) chat üzerinden değiştirilemez.
+// Global categories (UserID == nil) cannot be modified via chat.
 func TestChat_GlobalCategoryDelete_Rejected(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentDeleteCategory,
@@ -313,15 +313,15 @@ func TestChat_GlobalCategoryDelete_Rejected(t *testing.T) {
 
 	res := firstResult(t, w)
 	if res.Error == "" {
-		t.Fatal("global kategori silme reddedilmedi")
+		t.Fatal("global category deletion was not rejected")
 	}
 	if res.Token != "" {
-		t.Fatal("global kategori için onay kodu üretildi")
+		t.Fatal("a confirmation code was produced for a global category")
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Yıkıcı işlemler — token akışı
+// Destructive operations — token flow
 // ---------------------------------------------------------------------------
 
 func TestChat_DeleteCategory_IssuesConfirmationToken(t *testing.T) {
@@ -334,32 +334,32 @@ func TestChat_DeleteCategory_IssuesConfirmationToken(t *testing.T) {
 
 	res := firstResult(t, w)
 	if !res.RequiresConfirmation || res.Token == "" {
-		t.Fatalf("onay kodu üretilmedi: %+v", res)
+		t.Fatalf("no confirmation code was produced: %+v", res)
 	}
 	if res.Summary == "" {
-		t.Fatal("özet yok — frontend popup'ta ne gösterecek?")
+		t.Fatal("no summary — what will the frontend show in the popup?")
 	}
 	if !strings.Contains(res.Summary, "Bos Kategori") {
-		t.Fatalf("özet hedefi belirtmiyor: %q", res.Summary)
+		t.Fatalf("summary does not mention the target: %q", res.Summary)
 	}
 }
 
-// Silinemeyecek bir şey için onay SORULMAMALI.
-// Kullanıcı "Evet"e basıp sonra hata almasın.
+// Confirmation must NOT be asked for something that cannot be deleted.
+// The user shouldn't press "Yes" and then get an error.
 func TestChat_DeleteCategoryInUse_NoTokenIssued(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentDeleteCategory,
-		Params: models.ActionParams{TargetRef: "Yeme"}, // 100 numaralı işlem kullanıyor
+		Params: models.ActionParams{TargetRef: "Yeme"}, // used by transaction #100
 	})
 
 	w := performRequest(f.router, "POST", "/chat", `{"text":"yeme kategorisini sil"}`)
 
 	res := firstResult(t, w)
 	if res.Token != "" {
-		t.Fatal("kullanımdaki kategori için onay kodu üretildi")
+		t.Fatal("a confirmation code was produced for a category in use")
 	}
 	if res.Error == "" {
-		t.Fatal("kullanıcıya sebep bildirilmedi")
+		t.Fatal("the reason was not reported to the user")
 	}
 }
 
@@ -374,14 +374,14 @@ func TestConfirm_ValidToken_ExecutesDeletion(t *testing.T) {
 		`{"token":"`+token+`"}`)
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d (%s)", w.Code, w.Body.String())
+		t.Fatalf("expected 200, got %d (%s)", w.Code, w.Body.String())
 	}
 	if _, err := f.categories.GetByID(context.Background(), 2); err == nil {
-		t.Fatal("kategori silinmedi")
+		t.Fatal("category was not deleted")
 	}
 }
 
-// Token TEK KULLANIMLIK.
+// The token is SINGLE-USE.
 func TestConfirm_ReusedToken_Rejected(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentDeleteCategory,
@@ -393,7 +393,7 @@ func TestConfirm_ReusedToken_Rejected(t *testing.T) {
 	second := performRequest(f.router, "POST", "/actions/confirm", `{"token":"`+token+`"}`)
 
 	if second.Code != http.StatusBadRequest {
-		t.Fatalf("ikinci kullanımda 400 bekleniyordu, gelen %d", second.Code)
+		t.Fatalf("expected 400 on second use, got %d", second.Code)
 	}
 }
 
@@ -403,12 +403,12 @@ func TestConfirm_UnknownToken_Rejected(t *testing.T) {
 	w := performRequest(f.router, "POST", "/actions/confirm", `{"token":"act_uydurma"}`)
 
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("beklenen 400, gelen %d", w.Code)
+		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 
-// Başkasının token'ı kullanılamaz — ve sebep AYRIŞTIRILAMAZ olmalı
-// (aksi halde token'ın varlığı sızar).
+// Another user's token cannot be used — and the reason must be
+// INDISTINGUISHABLE (otherwise the token's existence leaks).
 func TestConfirm_ForeignToken_RejectedIndistinguishably(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentDeleteCategory,
@@ -416,7 +416,7 @@ func TestConfirm_ForeignToken_RejectedIndistinguishably(t *testing.T) {
 	})
 	token := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"sil"}`)).Token
 
-	// Aynı servis, FARKLI kullanıcı.
+	// Same service, DIFFERENT user.
 	svc := chat.NewActionService(f.parser, f.accounts, f.categories, f.txs, f.budgets, f.pending)
 	other := gin.New()
 	other.Use(authAs(otherUserID, models.RoleClient))
@@ -426,16 +426,16 @@ func TestConfirm_ForeignToken_RejectedIndistinguishably(t *testing.T) {
 	unknown := performRequest(other, "POST", "/actions/confirm", `{"token":"act_hicyok"}`)
 
 	if foreign.Code != http.StatusBadRequest {
-		t.Fatalf("başkasının token'ı kabul edildi: %d", foreign.Code)
+		t.Fatalf("another user's token was accepted: %d", foreign.Code)
 	}
 	if foreign.Body.String() != unknown.Body.String() {
-		t.Fatalf("cevaplar ayrışıyor -> token varlığı sızıyor:\n  yabancı: %s\n  olmayan: %s",
+		t.Fatalf("responses differ -> token existence leaks:\n  foreign: %s\n  unknown: %s",
 			foreign.Body.String(), unknown.Body.String())
 	}
 }
 
-// TOCTOU: token üretildikten SONRA kategori kullanıma girerse,
-// onay anında yeniden kontrol edilip engellenmeli.
+// TOCTOU: if the category becomes in-use AFTER the token was produced,
+// it must be re-checked and blocked at confirmation time.
 func TestConfirm_TargetBecameInUse_Blocked(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentDeleteCategory,
@@ -443,7 +443,7 @@ func TestConfirm_TargetBecameInUse_Blocked(t *testing.T) {
 	})
 	token := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"sil"}`)).Token
 
-	// Dünya değişti: kategoriye bir işlem eklendi.
+	// The world changed: a transaction was added to the category.
 	f.txs.seed(&models.Transaction{
 		ID: 200, AccountID: chatAccountID, CategoryID: 2, Amount: 10,
 		Type: "expense", Description: "yeni", TransactionDate: time.Now(),
@@ -452,21 +452,21 @@ func TestConfirm_TargetBecameInUse_Blocked(t *testing.T) {
 	w := performRequest(f.router, "POST", "/actions/confirm", `{"token":"`+token+`"}`)
 
 	if w.Code != http.StatusConflict {
-		t.Fatalf("beklenen 409, gelen %d (%s)", w.Code, w.Body.String())
+		t.Fatalf("expected 409, got %d (%s)", w.Code, w.Body.String())
 	}
 	if _, err := f.categories.GetByID(context.Background(), 2); err != nil {
-		t.Fatal("kategori silindi — TOCTOU koruması çalışmadı")
+		t.Fatal("category was deleted — TOCTOU protection did not work")
 	}
 }
 
-// budget_view: chat üzerinden bütçe görüntüleme (okuma niyeti, onaysız).
+// budget_view: viewing a budget via chat (read intent, no confirmation).
 //
-// GÜVEN SINIRI: sahte parser IntentBudgetView döndürür (model bunu üretmiş
-// gibi); gerçek olan chat.ActionService'in bu niyeti BuildBudgetView'e
-// yönlendirmesi ve HTTP handler'ıyla AYNI sonucu üretmesidir.
+// TRUST BOUNDARY: the fake parser returns IntentBudgetView (as if the model
+// produced it); what's real is chat.ActionService routing this intent to
+// BuildBudgetView and producing the SAME result as the HTTP handler.
 func TestChat_BudgetView_ReturnsCurrentPeriod(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{Intent: models.IntentBudgetView})
-	// Kategori 1 (Yeme) için 500 limitli, bugünü içeren bir bütçe.
+	// A budget with a 500 limit for category 1 (Yeme), covering today.
 	f.budgets.seed(
 		&models.Budget{ID: 1, UserID: chatUserID, Name: "Aylık",
 			StartDate: models.CivilDate(time.Now().AddDate(0, 0, -5)), PeriodDays: 30},
@@ -475,50 +475,50 @@ func TestChat_BudgetView_ReturnsCurrentPeriod(t *testing.T) {
 
 	w := performRequest(f.router, "POST", "/chat", `{"text":"bütçemi göster"}`)
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
 	}
 	res := firstResult(t, w)
 	if res.Error != "" {
-		t.Fatalf("beklenmeyen hata: %s", res.Error)
+		t.Fatalf("unexpected error: %s", res.Error)
 	}
 	if res.Risk != models.RiskRead {
-		t.Fatalf("budget_view okuma niyeti olmalı, gelen risk: %q", res.Risk)
+		t.Fatalf("budget_view should be a read intent, got risk: %q", res.Risk)
 	}
 
-	// res.Data JSON'a serialize edilmiş bir BudgetView; geri çözüp doğrula.
+	// res.Data is a BudgetView serialized to JSON; decode it back and verify.
 	raw, _ := json.Marshal(res.Data)
 	var view models.BudgetView
 	if err := json.Unmarshal(raw, &view); err != nil {
-		t.Fatalf("BudgetView çözülemedi: %v", err)
+		t.Fatalf("BudgetView could not be decoded: %v", err)
 	}
-	// Fixture'daki 50 TL'lik "kahve" işlemi (kategori 1) bu dönemde sayılmalı.
+	// The fixture's 50 TL "kahve" transaction (category 1) must count in this period.
 	if view.TotalSpent != 50 {
-		t.Fatalf("harcama 50 beklendi, gelen %v", view.TotalSpent)
+		t.Fatalf("expected spending of 50, got %v", view.TotalSpent)
 	}
 	if view.TotalLimit != 500 {
-		t.Fatalf("limit 500 beklendi, gelen %v", view.TotalLimit)
+		t.Fatalf("expected limit of 500, got %v", view.TotalLimit)
 	}
 }
 
-// Bütçesi olmayan kullanıcı chat'ten bütçe isterse: 200 + anlaşılır hata,
-// 500 DEĞİL (kullanıcı hatası, sunucu arızası değil).
+// If a user without a budget asks for one via chat: 200 + a clear error,
+// NOT 500 (it's a user error, not a server failure).
 func TestChat_BudgetView_NoBudget(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{Intent: models.IntentBudgetView})
 
 	w := performRequest(f.router, "POST", "/chat", `{"text":"bütçemi göster"}`)
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d", w.Code)
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	res := firstResult(t, w)
 	if res.Error != "you don't have a budget yet" {
-		t.Fatalf("anlaşılır 'bütçe yok' mesajı beklendi, gelen: %q", res.Error)
+		t.Fatalf("expected a clear 'no budget' message, got: %q", res.Error)
 	}
 }
 
-// budget_set: chat'ten bütçe kurma (create kademesi — YAZMAZ, taslak üretir).
+// budget_set: setting up a budget via chat (create tier — does NOT write, produces a draft).
 //
-// create_transaction ile aynı desen: sonuç res.Payload (bir CreateBudgetInput);
-// frontend onu POST /budgets ile gönderir. Gerçek yazma REST kapısından geçer.
+// Same pattern as create_transaction: the result is res.Payload (a CreateBudgetInput);
+// the frontend sends it via POST /budgets. The real write goes through the REST gate.
 func TestChat_BudgetSet_ProducesDraft(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentBudgetSet,
@@ -532,33 +532,33 @@ func TestChat_BudgetSet_ProducesDraft(t *testing.T) {
 
 	w := performRequest(f.router, "POST", "/chat", `{"text":"yemeye 500 aylık bütçe"}`)
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
 	}
 	res := firstResult(t, w)
 	if res.Error != "" {
-		t.Fatalf("beklenmeyen hata: %s", res.Error)
+		t.Fatalf("unexpected error: %s", res.Error)
 	}
 	if res.Risk != models.RiskCreate {
-		t.Fatalf("budget_set create kademesi olmalı, gelen: %q", res.Risk)
+		t.Fatalf("budget_set should be a create tier, got: %q", res.Risk)
 	}
 
 	raw, _ := json.Marshal(res.Payload)
 	var input models.CreateBudgetInput
 	if err := json.Unmarshal(raw, &input); err != nil {
-		t.Fatalf("CreateBudgetInput çözülemedi: %v", err)
+		t.Fatalf("CreateBudgetInput could not be decoded: %v", err)
 	}
 	if input.PeriodDays != 30 {
-		t.Fatalf("period_days 30 beklendi, gelen %d", input.PeriodDays)
+		t.Fatalf("expected period_days 30, got %d", input.PeriodDays)
 	}
 	if len(input.Categories) != 1 || input.Categories[0].CategoryID != 1 || input.Categories[0].LimitAmount != 500 {
-		t.Fatalf("kategori satırı yanlış çözüldü: %+v", input.Categories)
+		t.Fatalf("category row was decoded incorrectly: %+v", input.Categories)
 	}
 	if input.StartDate != time.Now().Format(models.DateLayout) {
-		t.Fatalf("başlangıç bugün olmalı, gelen %q", input.StartDate)
+		t.Fatalf("start date should be today, got %q", input.StartDate)
 	}
 }
 
-// Dönem verilmezse: değer UYDURMA, kullanıcıdan iste.
+// If the period is not given: don't MAKE UP a value, ask the user.
 func TestChat_BudgetSet_MissingPeriodNeedsInput(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentBudgetSet,
@@ -568,7 +568,7 @@ func TestChat_BudgetSet_MissingPeriodNeedsInput(t *testing.T) {
 	})
 	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"yemeye 500 bütçe"}`))
 	if res.Payload != nil {
-		t.Fatalf("eksik dönemle taslak üretilmemeli")
+		t.Fatalf("a draft must not be produced with a missing period")
 	}
 	found := false
 	for _, n := range res.NeedsInput {
@@ -577,11 +577,11 @@ func TestChat_BudgetSet_MissingPeriodNeedsInput(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("period_days NeedsInput'ta olmalı, gelen: %v", res.NeedsInput)
+		t.Fatalf("period_days should be in NeedsInput, got: %v", res.NeedsInput)
 	}
 }
 
-// Bilinmeyen kategori: reddet (model id uyduramaz, ref çözülemedi).
+// Unknown category: reject (the model can't make up an id, ref could not be resolved).
 func TestChat_BudgetSet_UnknownCategory(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentBudgetSet,
@@ -592,14 +592,14 @@ func TestChat_BudgetSet_UnknownCategory(t *testing.T) {
 	})
 	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"x"}`))
 	if res.Error == "" {
-		t.Fatalf("bilinmeyen kategori reddedilmeliydi")
+		t.Fatalf("unknown category should have been rejected")
 	}
 	if res.Payload != nil {
-		t.Fatalf("hata varken taslak üretilmemeli")
+		t.Fatalf("a draft must not be produced when there is an error")
 	}
 }
 
-// Gelir kategorisi bütçelenemez.
+// An income category cannot be budgeted.
 func TestChat_BudgetSet_IncomeCategoryRejected(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentBudgetSet,
@@ -613,11 +613,11 @@ func TestChat_BudgetSet_IncomeCategoryRejected(t *testing.T) {
 
 	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"x"}`))
 	if res.Error == "" || res.Payload != nil {
-		t.Fatalf("gelir kategorisi reddedilmeliydi (error: %q)", res.Error)
+		t.Fatalf("income category should have been rejected (error: %q)", res.Error)
 	}
 }
 
-// Aynı kategori iki kez verilirse reddet.
+// Reject if the same category is given twice.
 func TestChat_BudgetSet_DuplicateCategory(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentBudgetSet,
@@ -631,11 +631,11 @@ func TestChat_BudgetSet_DuplicateCategory(t *testing.T) {
 	})
 	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"x"}`))
 	if res.Error == "" || res.Payload != nil {
-		t.Fatalf("yinelenen kategori reddedilmeliydi")
+		t.Fatalf("duplicate category should have been rejected")
 	}
 }
 
-// Zaten bütçesi olan kullanıcı: create çakışırdı, anlaşılır mesaj ver.
+// A user who already has a budget: create would conflict, give a clear message.
 func TestChat_BudgetSet_ExistingBudgetRejected(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentBudgetSet,
@@ -649,14 +649,14 @@ func TestChat_BudgetSet_ExistingBudgetRejected(t *testing.T) {
 
 	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"x"}`))
 	if res.Payload != nil {
-		t.Fatalf("bütçe varken taslak üretilmemeli")
+		t.Fatalf("a draft must not be produced while a budget exists")
 	}
 	if !strings.Contains(res.Error, "you already have a budget") {
-		t.Fatalf("anlaşılır 'zaten var' mesajı beklendi, gelen: %q", res.Error)
+		t.Fatalf("expected a clear 'already exists' message, got: %q", res.Error)
 	}
 }
 
-// budget_delete: yıkıcı niyet — ONAY İSTER, hemen silmez.
+// budget_delete: destructive intent — REQUIRES CONFIRMATION, does not delete immediately.
 func TestChat_BudgetDelete_RequiresConfirmation(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{Intent: models.IntentBudgetDelete})
 	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Aylık",
@@ -665,30 +665,30 @@ func TestChat_BudgetDelete_RequiresConfirmation(t *testing.T) {
 
 	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"bütçemi sil"}`))
 	if res.Risk != models.RiskDestructive {
-		t.Fatalf("yıkıcı kademe beklendi, gelen: %q", res.Risk)
+		t.Fatalf("expected a destructive tier, got: %q", res.Risk)
 	}
 	if !res.RequiresConfirmation || res.Token == "" {
-		t.Fatalf("onay + token beklendi, gelen: %+v", res)
+		t.Fatalf("expected confirmation + token, got: %+v", res)
 	}
-	// Henüz SİLİNMEMELİ — sadece onay bekliyor.
+	// Must NOT be deleted yet — only awaiting confirmation.
 	if len(f.budgets.budgets) != 1 {
-		t.Fatalf("onaydan önce bütçe silinmemeli")
+		t.Fatalf("budget must not be deleted before confirmation")
 	}
 }
 
-// Bütçesi olmayan kullanıcı: token HİÇ üretilmez (boşuna "emin misin?" sorma).
+// A user without a budget: NO token is produced at all (don't bother asking "are you sure?").
 func TestChat_BudgetDelete_NoBudget(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{Intent: models.IntentBudgetDelete})
 	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"bütçemi sil"}`))
 	if res.RequiresConfirmation || res.Token != "" {
-		t.Fatalf("bütçe yokken token üretilmemeli")
+		t.Fatalf("a token must not be produced when there is no budget")
 	}
 	if res.Error != "you don't have a budget to delete" {
-		t.Fatalf("anlaşılır mesaj beklendi, gelen: %q", res.Error)
+		t.Fatalf("expected a clear message, got: %q", res.Error)
 	}
 }
 
-// Onay akışının tamamı: chat -> token -> confirm -> gerçekten silinir.
+// The full confirmation flow: chat -> token -> confirm -> actually deleted.
 func TestConfirm_BudgetDelete_Deletes(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{Intent: models.IntentBudgetDelete})
 	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Aylık",
@@ -697,15 +697,16 @@ func TestConfirm_BudgetDelete_Deletes(t *testing.T) {
 	token := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"bütçemi sil"}`)).Token
 	w := performRequest(f.router, "POST", "/actions/confirm", `{"token":"`+token+`"}`)
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
 	}
 	if len(f.budgets.budgets) != 0 {
-		t.Fatalf("onaydan sonra bütçe silinmiş olmalı")
+		t.Fatalf("budget should be deleted after confirmation")
 	}
 }
 
-// TOCTOU: token bütçe id=1 için üretildi; bu arada bütçe silinip YENİSİ (id=2)
-// kuruldu. Onay YENİ bütçeyi silmemeli — token bayat.
+// TOCTOU: the token was produced for budget id=1; meanwhile it was deleted
+// and a NEW one (id=2) was created. Confirmation must not delete the NEW
+// budget — the token is stale.
 func TestConfirm_BudgetDelete_StaleTokenRejected(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{Intent: models.IntentBudgetDelete})
 	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Eski",
@@ -713,22 +714,22 @@ func TestConfirm_BudgetDelete_StaleTokenRejected(t *testing.T) {
 
 	token := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"bütçemi sil"}`)).Token
 
-	// Kullanıcı bu arada bütçesini değiştirdi: eski gitti, yeni (id=2) geldi.
+	// The user changed their budget in the meantime: old one gone, new one (id=2) arrived.
 	_ = f.budgets.Delete(context.Background(), 1)
 	f.budgets.seed(&models.Budget{ID: 2, UserID: chatUserID, Name: "Yeni",
 		StartDate: models.CivilDate(time.Now()), PeriodDays: 15}, nil)
 
 	w := performRequest(f.router, "POST", "/actions/confirm", `{"token":"`+token+`"}`)
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("bayat token 404 vermeli, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("stale token should return 404, got %d (body: %s)", w.Code, w.Body.String())
 	}
-	// Yeni bütçe DOKUNULMAMIŞ olmalı.
+	// The new budget must be UNTOUCHED.
 	if _, ok := f.budgets.budgets[2]; !ok {
-		t.Fatalf("bayat token yeni bütçeyi sildi — TOCTOU koruması başarısız")
+		t.Fatalf("stale token deleted the new budget — TOCTOU protection failed")
 	}
 }
 
-// budget_update: yıkıcı niyet — onay ister, hemen değiştirmez.
+// budget_update: destructive intent — requires confirmation, does not change immediately.
 func TestChat_BudgetUpdate_RequiresConfirmation(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentBudgetUpdate,
@@ -742,15 +743,15 @@ func TestChat_BudgetUpdate_RequiresConfirmation(t *testing.T) {
 
 	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"yeme limitini 2000 yap"}`))
 	if res.Risk != models.RiskDestructive || !res.RequiresConfirmation || res.Token == "" {
-		t.Fatalf("yıkıcı + onay + token beklendi, gelen: %+v", res)
+		t.Fatalf("expected destructive + confirmation + token, got: %+v", res)
 	}
-	// Henüz değişmemeli.
+	// Must not have changed yet.
 	if f.budgets.lines[1][0].LimitAmount != 500 {
-		t.Fatalf("onaydan önce limit değişmemeli")
+		t.Fatalf("limit must not change before confirmation")
 	}
 }
 
-// Onay akışı: mevcut limiti değiştirir, DİĞER kategorileri korur.
+// Confirmation flow: changes the existing limit, PRESERVES the other categories.
 func TestConfirm_BudgetUpdate_ChangesLimitKeepsOthers(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentBudgetUpdate,
@@ -758,7 +759,7 @@ func TestConfirm_BudgetUpdate_ChangesLimitKeepsOthers(t *testing.T) {
 			BudgetCategories: []models.BudgetCategoryParam{{CategoryRef: "Yeme", Amount: 2000}},
 		},
 	})
-	// İki kategorili bütçe: Yeme(1)=500, Bos Kategori(2)=300.
+	// A budget with two categories: Yeme(1)=500, Bos Kategori(2)=300.
 	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Aylık",
 		StartDate: models.CivilDate(time.Now()), PeriodDays: 30},
 		[]models.BudgetCategory{
@@ -769,23 +770,23 @@ func TestConfirm_BudgetUpdate_ChangesLimitKeepsOthers(t *testing.T) {
 	token := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"yeme 2000"}`)).Token
 	w := performRequest(f.router, "POST", "/actions/confirm", `{"token":"`+token+`"}`)
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
 	}
 
-	// Yeme 2000 oldu, Bos Kategori 300 KORUNDU.
+	// Yeme became 2000, Bos Kategori 300 was PRESERVED.
 	limits := map[int]float64{}
 	for _, ln := range f.budgets.lines[1] {
 		limits[ln.CategoryID] = ln.LimitAmount
 	}
 	if limits[1] != 2000 {
-		t.Fatalf("Yeme limiti 2000 olmalı, gelen %v", limits[1])
+		t.Fatalf("Yeme limit should be 2000, got %v", limits[1])
 	}
 	if limits[2] != 300 {
-		t.Fatalf("Bos Kategori limiti 300 korunmalı, gelen %v", limits[2])
+		t.Fatalf("Bos Kategori limit should be preserved at 300, got %v", limits[2])
 	}
 }
 
-// Onay akışı: yeni kategori ekler, mevcudu korur.
+// Confirmation flow: adds a new category, preserves the existing one.
 func TestConfirm_BudgetUpdate_AddsCategory(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentBudgetUpdate,
@@ -800,14 +801,14 @@ func TestConfirm_BudgetUpdate_AddsCategory(t *testing.T) {
 	token := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"bos kategoriye 400 ekle"}`)).Token
 	w := performRequest(f.router, "POST", "/actions/confirm", `{"token":"`+token+`"}`)
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
 	}
 	if len(f.budgets.lines[1]) != 2 {
-		t.Fatalf("2 kategori olmalı (mevcut + yeni), gelen %d", len(f.budgets.lines[1]))
+		t.Fatalf("should have 2 categories (existing + new), got %d", len(f.budgets.lines[1]))
 	}
 }
 
-// Değişecek bir şey yoksa reddet (boş liste, dönem 0, isim yok).
+// Reject if there is nothing to change (empty list, period 0, no name).
 func TestChat_BudgetUpdate_NothingToChange(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{Intent: models.IntentBudgetUpdate})
 	f.budgets.seed(&models.Budget{ID: 1, UserID: chatUserID, Name: "Aylık",
@@ -815,14 +816,14 @@ func TestChat_BudgetUpdate_NothingToChange(t *testing.T) {
 
 	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"bütçeyi güncelle"}`))
 	if res.RequiresConfirmation {
-		t.Fatalf("değişiklik yokken token üretilmemeli")
+		t.Fatalf("a token must not be produced when there is no change")
 	}
 	if res.Error != "nothing to change was specified" {
-		t.Fatalf("anlaşılır mesaj beklendi, gelen: %q", res.Error)
+		t.Fatalf("expected a clear message, got: %q", res.Error)
 	}
 }
 
-// Bütçesi olmayan kullanıcı değiştirmek isterse.
+// If a user without a budget tries to modify it.
 func TestChat_BudgetUpdate_NoBudget(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentBudgetUpdate,
@@ -832,14 +833,14 @@ func TestChat_BudgetUpdate_NoBudget(t *testing.T) {
 	})
 	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"yeme 2000"}`))
 	if res.RequiresConfirmation {
-		t.Fatalf("bütçe yokken token üretilmemeli")
+		t.Fatalf("a token must not be produced when there is no budget")
 	}
 	if res.Error != "you don't have a budget to modify" {
-		t.Fatalf("anlaşılır mesaj beklendi, gelen: %q", res.Error)
+		t.Fatalf("expected a clear message, got: %q", res.Error)
 	}
 }
 
-// TOCTOU: token id=1 içindi; bütçe silinip yenisi (id=2) kuruldu -> reddet.
+// TOCTOU: token was for id=1; budget was deleted and a new one (id=2) was created -> reject.
 func TestConfirm_BudgetUpdate_StaleTokenRejected(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentBudgetUpdate,
@@ -860,15 +861,15 @@ func TestConfirm_BudgetUpdate_StaleTokenRejected(t *testing.T) {
 
 	w := performRequest(f.router, "POST", "/actions/confirm", `{"token":"`+token+`"}`)
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("bayat token 404 vermeli, gelen %d", w.Code)
+		t.Fatalf("stale token should return 404, got %d", w.Code)
 	}
-	// Yeni bütçe DEĞİŞMEMİŞ olmalı.
+	// The new budget must be UNCHANGED.
 	if f.budgets.lines[2][0].LimitAmount != 999 {
-		t.Fatalf("bayat token yeni bütçeyi değiştirdi — TOCTOU koruması başarısız")
+		t.Fatalf("stale token modified the new budget — TOCTOU protection failed")
 	}
 }
 
-// budget_view göreli dönem: period_offset ile geçmiş dönem.
+// budget_view relative period: a past period via period_offset.
 func TestChat_BudgetView_PreviousPeriod(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentBudgetView,
@@ -880,22 +881,22 @@ func TestChat_BudgetView_PreviousPeriod(t *testing.T) {
 
 	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"geçen dönem bütçem"}`))
 	if res.Error != "" {
-		t.Fatalf("beklenmeyen hata: %s", res.Error)
+		t.Fatalf("unexpected error: %s", res.Error)
 	}
 	raw, _ := json.Marshal(res.Data)
 	var view models.BudgetView
 	if err := json.Unmarshal(raw, &view); err != nil {
-		t.Fatalf("BudgetView çözülemedi: %v", err)
+		t.Fatalf("BudgetView could not be decoded: %v", err)
 	}
 	if view.Period.Offset != -1 {
-		t.Fatalf("offset -1 beklendi, gelen %d", view.Period.Offset)
+		t.Fatalf("expected offset -1, got %d", view.Period.Offset)
 	}
 	if !view.Period.Historical {
-		t.Fatalf("geçmiş dönem historical:true olmalı")
+		t.Fatalf("a past period should have historical:true")
 	}
 }
 
-// Aşırı offset: Duration taşmasını engelle, anlaşılır mesaj ver.
+// Excessive offset: prevent Duration overflow, give a clear message.
 func TestChat_BudgetView_OffsetOutOfRange(t *testing.T) {
 	f := newChatFixture(t, models.ParsedAction{
 		Intent: models.IntentBudgetView,
@@ -906,6 +907,6 @@ func TestChat_BudgetView_OffsetOutOfRange(t *testing.T) {
 
 	res := firstResult(t, performRequest(f.router, "POST", "/chat", `{"text":"999 dönem önceki bütçem"}`))
 	if res.Error != "period range is too large" {
-		t.Fatalf("anlaşılır sınır mesajı beklendi, gelen: %q", res.Error)
+		t.Fatalf("expected a clear range-limit message, got: %q", res.Error)
 	}
 }

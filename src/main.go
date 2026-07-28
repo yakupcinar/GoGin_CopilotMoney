@@ -8,6 +8,7 @@ import (
 	"GoGinMoneyCopilot/handlers"
 	"GoGinMoneyCopilot/maintenance"
 	"GoGinMoneyCopilot/middleware"
+	"GoGinMoneyCopilot/models"
 	"GoGinMoneyCopilot/repositories"
 	"GoGinMoneyCopilot/validators"
 	"context"
@@ -112,14 +113,28 @@ func main() {
 	chatHandler := handlers.NewChatHandler(chatService)
 
 	// --- Rate limiting ---
-	// authLimiter : IP başına — brute-force'u pahalı kılar
-	// chatLimiter : KULLANICI başına — /chat her istekte gerçek para harcıyor
+	// authLimiter : IP başına, SABİT eşik — brute-force'u pahalı kılar,
+	//               planla ilgisi yok (kimlik doğrulanmadan plan bilinmez).
+	// chatLimiter : KULLANICI başına, PLANA GÖRE DEĞİŞEN eşik — /chat her
+	//               istekte gerçek para harcıyor; free/pro farklı tavan alır.
 	authPerMin := intEnv("AUTH_RATE_PER_MIN", 10)
-	chatPerMin := intEnv("CHAT_RATE_PER_MIN", 20)
+
+	// chatPlanLimits: plan bulunamazsa ya da sorgu başarısız olursa
+	// LimitByPlan en KISITLAYICI (free) değere düşer — bir DB arızasında
+	// maliyeti serbest bırakmak yanlış taraf olurdu.
+	chatPlanLimits := map[string]int{
+		string(models.PlanFree): intEnv("CHAT_RATE_PER_MIN_FREE", 5),
+		string(models.PlanPro):  intEnv("CHAT_RATE_PER_MIN_PRO", 30),
+	}
+	chatDefaultLimit := chatPlanLimits[string(models.PlanFree)]
 
 	// Bellekteki sayaçlar HER ZAMAN kurulur: Redis varsa yedek, yoksa asıl.
+	// chatMem'in kurucudaki perMinute'ü yalnızca ham Allow() çağrılırsa
+	// kullanılır (chat rotası hiç çağırmaz, her zaman AllowWithLimit kullanır)
+	// — o yüzden burada "en kısıtlayıcı" free limiti veriyoruz, anlamsız bir
+	// sabit yerine.
 	authMem := middleware.NewRateLimiter(authPerMin, 5)
-	chatMem := middleware.NewRateLimiter(chatPerMin, 5)
+	chatMem := middleware.NewRateLimiter(chatDefaultLimit, 5)
 	go authMem.StartSweeper(sweeperStop)
 	go chatMem.StartSweeper(sweeperStop)
 
@@ -127,11 +142,24 @@ func main() {
 	// çalıştığında limit gerçekten uygulanır. Ölçülen: Redis'siz 2 kopyada
 	// limit ~2 katına çıkıyordu.
 	var authLimiter middleware.Limiter = authMem
-	var chatLimiter middleware.Limiter = chatMem
+	var chatLimiter middleware.FullLimiter = chatMem
 	if database.RDB != nil {
 		authLimiter = middleware.NewRedisLimiter(database.RDB, "auth", authPerMin, authMem)
-		chatLimiter = middleware.NewRedisLimiter(database.RDB, "chat", chatPerMin, chatMem)
+		chatLimiter = middleware.NewRedisLimiter(database.RDB, "chat", chatDefaultLimit, chatMem)
 		log.Println("rate limiting: using redis (in-process counters kept as fallback)")
+	}
+
+	// chatPlanFn — HER /chat isteğinde planı TAZE okur (JWT'ye gömmüyoruz):
+	// kullanıcı abone olur olmaz yeni limit hemen uygulanır, 15 dk'lık access
+	// token ömrünü beklemez. Bedeli: bir kullanıcı sorgusu daha — chat isteği
+	// zaten kategori/hesap için veritabanına gittiğinden kabul edilebilir.
+	chatPlanFn := func(c *gin.Context) (string, error) {
+		userID := c.MustGet("user_id").(int)
+		u, err := userRepo.GetByID(c.Request.Context(), userID)
+		if err != nil {
+			return "", err
+		}
+		return string(u.Plan), nil
 	}
 
 	r := gin.New()
@@ -163,7 +191,9 @@ func main() {
 		// Chat: serbest metinden eylem üretir. Yıkıcı işlemler token'lı
 		// onay gerektirir; frontend "Emin misiniz?" popup'ında summary'yi
 		// gösterip token'ı /actions/confirm'e gönderir.
-		authorized.POST("/chat", middleware.Limit(chatLimiter, middleware.KeyByUser), chatHandler.Chat)
+		authorized.POST("/chat",
+			middleware.LimitByPlan(chatLimiter, middleware.KeyByUser, chatPlanFn, chatPlanLimits, chatDefaultLimit),
+			chatHandler.Chat)
 		authorized.POST("/actions/confirm", chatHandler.Confirm)
 
 		accounts := authorized.Group("/accounts")

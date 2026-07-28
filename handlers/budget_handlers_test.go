@@ -24,7 +24,7 @@ func setupBudgetRouter(bRepo *fakeBudgetRepo, catRepo *fakeCategoryRepo, accRepo
 	return r
 }
 
-// seedExpenseCategories — kullanıcı 1 için market(3) ve ulaşım(9) gider kategorileri.
+// seedExpenseCategories — market(3) and transport(9) expense categories for user 1.
 func seedExpenseCategories(catRepo *fakeCategoryRepo, userID int) {
 	u := userID
 	catRepo.seed(&models.Category{ID: 3, Name: "Market", Type: "expense", UserID: &u})
@@ -45,17 +45,17 @@ func TestCreateBudget_Success(t *testing.T) {
 	w := performRequest(r, "POST", "/budgets", body)
 
 	if w.Code != http.StatusCreated {
-		t.Fatalf("beklenen 201, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 201, got %d (body: %s)", w.Code, w.Body.String())
 	}
 	if len(bRepo.budgets) != 1 {
-		t.Fatalf("bütçe oluşmadı")
+		t.Fatalf("budget was not created")
 	}
 	b, _ := bRepo.GetForUser(context.Background(), 1)
 	if len(bRepo.lines[b.ID]) != 2 {
-		t.Fatalf("2 kategori satırı beklendi, gelen %d", len(bRepo.lines[b.ID]))
+		t.Fatalf("expected 2 category lines, got %d", len(bRepo.lines[b.ID]))
 	}
 	if !b.StartDate.Equal(models.CivilDate(time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC))) {
-		t.Fatalf("başlangıç tarihi yanlış: %s", b.StartDate)
+		t.Fatalf("wrong start date: %s", b.StartDate)
 	}
 }
 
@@ -65,15 +65,15 @@ func TestCreateBudget_InvalidInput(t *testing.T) {
 	seedExpenseCategories(catRepo, 1)
 	r := setupBudgetRouter(bRepo, catRepo, newFakeAccountRepo(), newFakeTransactionRepo(), 1, models.RoleClient)
 
-	// period_days: 0 -> binding düşer
+	// period_days: 0 -> the binding fails
 	body := `{"name":"X","start_date":"2026-01-05","period_days":0,"categories":[{"category_id":3,"limit_amount":6000}]}`
 	w := performRequest(r, "POST", "/budgets", body)
 
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("beklenen 400, gelen %d", w.Code)
+		t.Fatalf("expected 400, got %d", w.Code)
 	}
 	if len(bRepo.budgets) != 0 {
-		t.Fatalf("geçersiz girdiyle bütçe oluştu")
+		t.Fatalf("a budget was created with invalid input")
 	}
 }
 
@@ -86,7 +86,7 @@ func TestCreateBudget_PeriodDaysTooLarge(t *testing.T) {
 	body := `{"name":"X","start_date":"2026-01-05","period_days":366,"categories":[{"category_id":3,"limit_amount":6000}]}`
 	w := performRequest(r, "POST", "/budgets", body)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("beklenen 400 (period_days 365'i aştı), gelen %d", w.Code)
+		t.Fatalf("expected 400 (period_days exceeded 365), got %d", w.Code)
 	}
 }
 
@@ -98,11 +98,11 @@ func TestCreateBudget_EmptyCategoriesRejected(t *testing.T) {
 	body := `{"name":"X","start_date":"2026-01-05","period_days":30,"categories":[]}`
 	w := performRequest(r, "POST", "/budgets", body)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("beklenen 400 (boş kategori), gelen %d", w.Code)
+		t.Fatalf("expected 400 (empty categories), got %d", w.Code)
 	}
 }
 
-// dive'ın bağlı olduğunu kanıtlar: 2. eleman bozuk (category_id: 0).
+// Proves that "dive" is wired up: the 2nd element is malformed (category_id: 0).
 func TestCreateBudget_MalformedCategoryLineRejected(t *testing.T) {
 	bRepo := newFakeBudgetRepo()
 	catRepo := newFakeCategoryRepo()
@@ -112,10 +112,10 @@ func TestCreateBudget_MalformedCategoryLineRejected(t *testing.T) {
 	body := `{"name":"X","start_date":"2026-01-05","period_days":30,"categories":[{"category_id":3,"limit_amount":6000},{"category_id":0,"limit_amount":100}]}`
 	w := performRequest(r, "POST", "/budgets", body)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("beklenen 400 (dive bozuk satırı yakalamalı), gelen %d", w.Code)
+		t.Fatalf("expected 400 (dive should catch the malformed line), got %d", w.Code)
 	}
 	if len(bRepo.budgets) != 0 {
-		t.Fatalf("bozuk satırla bütçe oluştu")
+		t.Fatalf("a budget was created with a malformed line")
 	}
 }
 
@@ -128,10 +128,10 @@ func TestCreateBudget_DuplicateCategoryRejected(t *testing.T) {
 	body := `{"name":"X","start_date":"2026-01-05","period_days":30,"categories":[{"category_id":3,"limit_amount":6000},{"category_id":3,"limit_amount":2000}]}`
 	w := performRequest(r, "POST", "/budgets", body)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("beklenen 400 (yinelenen kategori), gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 400 (duplicate category), got %d (body: %s)", w.Code, w.Body.String())
 	}
 	if len(bRepo.budgets) != 0 {
-		t.Fatalf("yinelenen kategoriyle bütçe oluştu")
+		t.Fatalf("a budget was created with a duplicate category")
 	}
 }
 
@@ -144,10 +144,10 @@ func TestCreateBudget_FutureStartDateRejected(t *testing.T) {
 	body := `{"name":"X","start_date":"2999-01-01","period_days":30,"categories":[{"category_id":3,"limit_amount":6000}]}`
 	w := performRequest(r, "POST", "/budgets", body)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("beklenen 400 (gelecek tarih), gelen %d", w.Code)
+		t.Fatalf("expected 400 (future date), got %d", w.Code)
 	}
 	if len(bRepo.budgets) != 0 {
-		t.Fatalf("gelecek tarihle bütçe oluştu")
+		t.Fatalf("a budget was created with a future date")
 	}
 }
 
@@ -161,11 +161,11 @@ func TestCreateBudget_IncomeCategoryRejected(t *testing.T) {
 	body := `{"name":"X","start_date":"2026-01-05","period_days":30,"categories":[{"category_id":5,"limit_amount":6000}]}`
 	w := performRequest(r, "POST", "/budgets", body)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("beklenen 400 (gelir kategorisi bütçelenemez), gelen %d", w.Code)
+		t.Fatalf("expected 400 (an income category cannot be budgeted), got %d", w.Code)
 	}
 }
 
-// GÜVENLİK: başkasının kategorisi bütçeye eklenemez, varlığı sızmadan 404.
+// SECURITY: another user's category cannot be added to a budget; 404 without leaking its existence.
 func TestCreateBudget_ForeignCategoryReturns404(t *testing.T) {
 	bRepo := newFakeBudgetRepo()
 	catRepo := newFakeCategoryRepo()
@@ -176,10 +176,10 @@ func TestCreateBudget_ForeignCategoryReturns404(t *testing.T) {
 	body := `{"name":"X","start_date":"2026-01-05","period_days":30,"categories":[{"category_id":42,"limit_amount":6000}]}`
 	w := performRequest(r, "POST", "/budgets", body)
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("beklenen 404, gelen %d", w.Code)
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 	if len(bRepo.budgets) != 0 {
-		t.Fatalf("başkasının kategorisiyle bütçe oluştu")
+		t.Fatalf("a budget was created with another user's category")
 	}
 }
 
@@ -192,7 +192,7 @@ func TestCreateBudget_GlobalCategoryAccepted(t *testing.T) {
 	body := `{"name":"X","start_date":"2026-01-05","period_days":30,"categories":[{"category_id":100,"limit_amount":6000}]}`
 	w := performRequest(r, "POST", "/budgets", body)
 	if w.Code != http.StatusCreated {
-		t.Fatalf("beklenen 201 (global kategori kabul edilmeli), gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 201 (a global category should be accepted), got %d (body: %s)", w.Code, w.Body.String())
 	}
 }
 
@@ -206,14 +206,14 @@ func TestCreateBudget_SecondBudgetReturnsConflict(t *testing.T) {
 	body := `{"name":"İkinci","start_date":"2026-01-05","period_days":30,"categories":[{"category_id":3,"limit_amount":6000}]}`
 	w := performRequest(r, "POST", "/budgets", body)
 	if w.Code != http.StatusConflict {
-		t.Fatalf("beklenen 409 (kullanıcı başına tek bütçe), gelen %d", w.Code)
+		t.Fatalf("expected 409 (one budget per user), got %d", w.Code)
 	}
 }
 
 // --- Get ---
 
-// currentPeriod — handler'ın kullandığı now ile aynı dönemi hesaplar; sınır
-// testlerini duvar saatinden bağımsız kılar.
+// currentPeriod — computes the same period the handler uses with its own
+// `now`, making boundary tests independent of wall-clock time.
 func currentPeriod(b *models.Budget) models.Period {
 	return b.PeriodAt(time.Now().In(models.AppLocation()), 0)
 }
@@ -222,7 +222,7 @@ func decodeBudgetView(t *testing.T, w *httptest.ResponseRecorder) models.BudgetV
 	t.Helper()
 	var v models.BudgetView
 	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
-		t.Fatalf("yanıt çözülemedi: %v (body: %s)", err, w.Body.String())
+		t.Fatalf("response could not be decoded: %v (body: %s)", err, w.Body.String())
 	}
 	return v
 }
@@ -247,17 +247,17 @@ func TestGetBudget_Success(t *testing.T) {
 	r := setupBudgetRouter(bRepo, catRepo, accRepo, txRepo, 1, models.RoleClient)
 	w := performRequest(r, "GET", "/budgets", "")
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
 	}
 	v := decodeBudgetView(t, w)
 	if !moneyEq(v.TotalLimit, 8000) {
-		t.Fatalf("toplam limit 8000 beklendi, gelen %v", v.TotalLimit)
+		t.Fatalf("expected total limit 8000, got %v", v.TotalLimit)
 	}
 	if !moneyEq(v.TotalSpent, 4660) {
-		t.Fatalf("toplam harcama 4660 beklendi, gelen %v", v.TotalSpent)
+		t.Fatalf("expected total spent 4660, got %v", v.TotalSpent)
 	}
 	if !moneyEq(v.TotalLeft, 3340) {
-		t.Fatalf("kalan 3340 beklendi, gelen %v", v.TotalLeft)
+		t.Fatalf("expected remaining 3340, got %v", v.TotalLeft)
 	}
 }
 
@@ -265,7 +265,7 @@ func TestGetBudget_NotFound(t *testing.T) {
 	r := setupBudgetRouter(newFakeBudgetRepo(), newFakeCategoryRepo(), newFakeAccountRepo(), newFakeTransactionRepo(), 1, models.RoleClient)
 	w := performRequest(r, "GET", "/budgets", "")
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("beklenen 404, gelen %d", w.Code)
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
 
@@ -281,19 +281,19 @@ func TestGetBudget_OnlySumsExpenses(t *testing.T) {
 	bRepo.seed(b, []models.BudgetCategory{{ID: 1, BudgetID: 1, CategoryID: 3, LimitAmount: 6000}})
 	p := currentPeriod(b)
 	txRepo.seed(&models.Transaction{ID: 1, AccountID: 1, CategoryID: 3, Amount: 500, Type: "expense", TransactionDate: p.Start})
-	// aynı kategoride bir GELİR — bütçeye SAYILMAMALI
+	// an INCOME entry in the same category — must NOT count toward the budget
 	txRepo.seed(&models.Transaction{ID: 2, AccountID: 1, CategoryID: 3, Amount: 9999, Type: "income", TransactionDate: p.Start})
 
 	r := setupBudgetRouter(bRepo, catRepo, accRepo, txRepo, 1, models.RoleClient)
 	w := performRequest(r, "GET", "/budgets", "")
 	v := decodeBudgetView(t, w)
 	if !moneyEq(v.TotalSpent, 500) {
-		t.Fatalf("sadece gider sayılmalıydı (500), gelen %v", v.TotalSpent)
+		t.Fatalf("only the expense should have counted (500), got %v", v.TotalSpent)
 	}
 }
 
-// GÜVENLİK: başka kullanıcının hesabındaki işlem, aynı kategoride olsa bile
-// benim bütçeme sayılmaz.
+// SECURITY: a transaction on another user's account must not count toward
+// my budget, even in the same category.
 func TestGetBudget_OnlySumsOwnAccounts(t *testing.T) {
 	bRepo := newFakeBudgetRepo()
 	catRepo := newFakeCategoryRepo()
@@ -313,7 +313,7 @@ func TestGetBudget_OnlySumsOwnAccounts(t *testing.T) {
 	w := performRequest(r, "GET", "/budgets", "")
 	v := decodeBudgetView(t, w)
 	if !moneyEq(v.TotalSpent, 300) {
-		t.Fatalf("sadece kendi hesabım sayılmalıydı (300), gelen %v", v.TotalSpent)
+		t.Fatalf("only my own account should have counted (300), got %v", v.TotalSpent)
 	}
 }
 
@@ -328,14 +328,14 @@ func TestGetBudget_IncludesPeriodStartDay(t *testing.T) {
 	b := &models.Budget{ID: 1, UserID: 1, Name: "Aylık", StartDate: models.CivilDate(time.Now().AddDate(0, 0, -5)), PeriodDays: 30}
 	bRepo.seed(b, []models.BudgetCategory{{ID: 1, BudgetID: 1, CategoryID: 3, LimitAmount: 6000}})
 	p := currentPeriod(b)
-	// Tam dönem başı: DAHİL (>= from)
+	// Exactly at the period start: INCLUDED (>= from)
 	txRepo.seed(&models.Transaction{ID: 1, AccountID: 1, CategoryID: 3, Amount: 111, Type: "expense", TransactionDate: p.Start})
 
 	r := setupBudgetRouter(bRepo, catRepo, accRepo, txRepo, 1, models.RoleClient)
 	w := performRequest(r, "GET", "/budgets", "")
 	v := decodeBudgetView(t, w)
 	if !moneyEq(v.TotalSpent, 111) {
-		t.Fatalf("dönem başındaki işlem dahil olmalıydı, gelen %v", v.TotalSpent)
+		t.Fatalf("the transaction at the period start should have been included, got %v", v.TotalSpent)
 	}
 }
 
@@ -350,14 +350,14 @@ func TestGetBudget_ExcludesPeriodEndDay(t *testing.T) {
 	b := &models.Budget{ID: 1, UserID: 1, Name: "Aylık", StartDate: models.CivilDate(time.Now().AddDate(0, 0, -5)), PeriodDays: 30}
 	bRepo.seed(b, []models.BudgetCategory{{ID: 1, BudgetID: 1, CategoryID: 3, LimitAmount: 6000}})
 	p := currentPeriod(b)
-	// Tam dönem sonu: HARİÇ (< to) — sonraki döneme ait
+	// Exactly at the period end: EXCLUDED (< to) — belongs to the next period
 	txRepo.seed(&models.Transaction{ID: 1, AccountID: 1, CategoryID: 3, Amount: 222, Type: "expense", TransactionDate: p.End})
 
 	r := setupBudgetRouter(bRepo, catRepo, accRepo, txRepo, 1, models.RoleClient)
 	w := performRequest(r, "GET", "/budgets", "")
 	v := decodeBudgetView(t, w)
 	if !moneyEq(v.TotalSpent, 0) {
-		t.Fatalf("dönem sonundaki işlem hariç olmalıydı (0), gelen %v", v.TotalSpent)
+		t.Fatalf("the transaction at the period end should have been excluded (0), got %v", v.TotalSpent)
 	}
 }
 
@@ -375,15 +375,15 @@ func TestGetBudget_PastPeriodOffset(t *testing.T) {
 	r := setupBudgetRouter(bRepo, catRepo, accRepo, txRepo, 1, models.RoleClient)
 	w := performRequest(r, "GET", "/budgets?offset=-1", "")
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d", w.Code)
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	v := decodeBudgetView(t, w)
 	if !v.Period.Historical {
-		t.Fatalf("geçmiş dönem historical:true olmalıydı")
+		t.Fatalf("a past period should have historical:true")
 	}
 	current := currentPeriod(b)
 	if v.Period.StartDate == current.Start.Format(models.DateLayout) {
-		t.Fatalf("geçmiş dönem başlangıcı güncel dönemle aynı çıktı: %s", v.Period.StartDate)
+		t.Fatalf("the past period's start matched the current period: %s", v.Period.StartDate)
 	}
 }
 
@@ -393,7 +393,7 @@ func TestGetBudget_InvalidOffsetFormat(t *testing.T) {
 	r := setupBudgetRouter(bRepo, newFakeCategoryRepo(), newFakeAccountRepo(), newFakeTransactionRepo(), 1, models.RoleClient)
 	w := performRequest(r, "GET", "/budgets?offset=abc", "")
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("beklenen 400, gelen %d", w.Code)
+		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 
@@ -403,7 +403,7 @@ func TestGetBudget_OffsetOutOfRange(t *testing.T) {
 	r := setupBudgetRouter(bRepo, newFakeCategoryRepo(), newFakeAccountRepo(), newFakeTransactionRepo(), 1, models.RoleClient)
 	w := performRequest(r, "GET", "/budgets?offset=99999", "")
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("beklenen 400 (offset sınır dışı), gelen %d", w.Code)
+		t.Fatalf("expected 400 (offset out of range), got %d", w.Code)
 	}
 }
 
@@ -422,10 +422,10 @@ func TestGetBudget_UnspentCategoryReportsZero(t *testing.T) {
 	w := performRequest(r, "GET", "/budgets", "")
 	v := decodeBudgetView(t, w)
 	if len(v.Categories) != 1 || !moneyEq(v.Categories[0].Spent, 0) {
-		t.Fatalf("harcamasız kategori 0 raporlamalı, gelen %+v", v.Categories)
+		t.Fatalf("a category with no spending should report 0, got %+v", v.Categories)
 	}
 	if !moneyEq(v.Categories[0].Remaining, 6000) {
-		t.Fatalf("kalan 6000 olmalı, gelen %v", v.Categories[0].Remaining)
+		t.Fatalf("expected remaining 6000, got %v", v.Categories[0].Remaining)
 	}
 }
 
@@ -446,10 +446,10 @@ func TestGetBudget_OverLimitReportsNegativeRemaining(t *testing.T) {
 	w := performRequest(r, "GET", "/budgets", "")
 	v := decodeBudgetView(t, w)
 	if !v.Categories[0].OverLimit {
-		t.Fatalf("over_limit true olmalıydı")
+		t.Fatalf("over_limit should have been true")
 	}
 	if !moneyEq(v.Categories[0].Remaining, -350.50) {
-		t.Fatalf("kalan -350.50 olmalı, gelen %v", v.Categories[0].Remaining)
+		t.Fatalf("expected remaining -350.50, got %v", v.Categories[0].Remaining)
 	}
 }
 
@@ -465,11 +465,11 @@ func TestGetBudget_UserWithNoAccountsReportsZeroSpent(t *testing.T) {
 	r := setupBudgetRouter(bRepo, catRepo, newFakeAccountRepo(), txRepo, 1, models.RoleClient)
 	w := performRequest(r, "GET", "/budgets", "")
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d", w.Code)
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	v := decodeBudgetView(t, w)
 	if !moneyEq(v.TotalSpent, 0) {
-		t.Fatalf("hesabı olmayan kullanıcıda harcama 0 olmalı, gelen %v", v.TotalSpent)
+		t.Fatalf("a user with no accounts should show 0 spent, got %v", v.TotalSpent)
 	}
 }
 
@@ -486,14 +486,14 @@ func TestUpdateBudget_ReplacesCategories(t *testing.T) {
 	body := `{"name":"Yeni","start_date":"2026-02-01","period_days":15,"categories":[{"category_id":9,"limit_amount":1000}]}`
 	w := performRequest(r, "PUT", "/budgets", body)
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
 	}
 	lines := bRepo.lines[1]
 	if len(lines) != 1 || lines[0].CategoryID != 9 {
-		t.Fatalf("kategoriler değiştirilmedi, eski satır kalmış olabilir: %+v", lines)
+		t.Fatalf("categories were not replaced, an old line may remain: %+v", lines)
 	}
 	if bRepo.budgets[1].PeriodDays != 15 || bRepo.budgets[1].Name != "Yeni" {
-		t.Fatalf("başlık güncellenmedi: %+v", bRepo.budgets[1])
+		t.Fatalf("the header was not updated: %+v", bRepo.budgets[1])
 	}
 }
 
@@ -502,7 +502,7 @@ func TestUpdateBudget_NotFound(t *testing.T) {
 	body := `{"name":"Yeni","start_date":"2026-02-01","period_days":15,"categories":[{"category_id":9,"limit_amount":1000}]}`
 	w := performRequest(r, "PUT", "/budgets", body)
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("beklenen 404, gelen %d", w.Code)
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
 
@@ -513,7 +513,7 @@ func TestUpdateBudget_InvalidInput(t *testing.T) {
 	body := `{"name":"Yeni","start_date":"2026-02-01","period_days":0,"categories":[{"category_id":9,"limit_amount":1000}]}`
 	w := performRequest(r, "PUT", "/budgets", body)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("beklenen 400, gelen %d", w.Code)
+		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 
@@ -527,13 +527,13 @@ func TestDeleteBudget_Success(t *testing.T) {
 
 	w := performRequest(r, "DELETE", "/budgets", "")
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d", w.Code)
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	if len(bRepo.budgets) != 0 {
-		t.Fatalf("bütçe silinmedi")
+		t.Fatalf("budget was not deleted")
 	}
 	if len(bRepo.lines[1]) != 0 {
-		t.Fatalf("bütçe satırları silinmedi")
+		t.Fatalf("budget lines were not deleted")
 	}
 }
 
@@ -541,6 +541,6 @@ func TestDeleteBudget_NotFound(t *testing.T) {
 	r := setupBudgetRouter(newFakeBudgetRepo(), newFakeCategoryRepo(), newFakeAccountRepo(), newFakeTransactionRepo(), 1, models.RoleClient)
 	w := performRequest(r, "DELETE", "/budgets", "")
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("beklenen 404, gelen %d", w.Code)
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }

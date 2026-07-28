@@ -13,15 +13,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Hibrit auth akışının testleri.
+// Tests for the hybrid auth flow.
 //
-//	access token  : JSON gövdesinde döner (frontend bellekte tutar)
-//	refresh token : HttpOnly cookie (JS okuyamaz)
+//	access token  : returned in the JSON body (frontend keeps it in memory)
+//	refresh token : HttpOnly cookie (JS cannot read it)
 //
-// Bu testler gerçek DB veya AI gerektirmez — sahte repo'larla çalışır.
+// These tests need no real DB or AI — they run against fake repositories.
 
 // ---------------------------------------------------------------------------
-// yardımcılar
+// helpers
 // ---------------------------------------------------------------------------
 
 func refreshCookieOf(w *httptest.ResponseRecorder) *http.Cookie {
@@ -44,7 +44,7 @@ func performWithCookie(r *gin.Engine, method, path, body string, ck *http.Cookie
 	return w
 }
 
-// loginFixture — giriş yapmış bir kullanıcı ve depoları hazırlar.
+// loginFixture — sets up a logged-in user and the backing repositories.
 func loginFixture(t *testing.T) (*gin.Engine, *fakeUserRepo, *fakeTokenRepo, *fakeRefreshRepo, *models.User) {
 	t.Helper()
 	os.Setenv("JWT_SECRET", "test-secret")
@@ -52,7 +52,7 @@ func loginFixture(t *testing.T) (*gin.Engine, *fakeUserRepo, *fakeTokenRepo, *fa
 
 	hash, err := auth.HashPassword("dogrusifre123")
 	if err != nil {
-		t.Fatalf("hash üretilemedi: %v", err)
+		t.Fatalf("hash could not be generated: %v", err)
 	}
 	userRepo := newFakeUserRepo()
 	user := userRepo.seedUser("testuser", hash, models.RoleClient)
@@ -67,7 +67,7 @@ func doLogin(t *testing.T, r *gin.Engine) *httptest.ResponseRecorder {
 	t.Helper()
 	w := performRequest(r, "POST", "/login", `{"username":"testuser","password":"dogrusifre123"}`)
 	if w.Code != http.StatusOK {
-		t.Fatalf("login başarısız: %d (%s)", w.Code, w.Body.String())
+		t.Fatalf("login failed: %d (%s)", w.Code, w.Body.String())
 	}
 	return w
 }
@@ -76,7 +76,7 @@ func accessTokenOf(t *testing.T, w *httptest.ResponseRecorder) string {
 	t.Helper()
 	var resp models.LoginResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("cevap parse edilemedi: %v", err)
+		t.Fatalf("response could not be parsed: %v", err)
 	}
 	return resp.Token
 }
@@ -85,9 +85,10 @@ func accessTokenOf(t *testing.T, w *httptest.ResponseRecorder) string {
 // Login
 // ---------------------------------------------------------------------------
 
-// Cookie öznitelikleri güvenliğin taşıyıcısı: HttpOnly XSS'i, SameSite CSRF'i,
-// Path ise CSRF yüzeyini tek endpoint'e indirmeyi sağlıyor. Biri düşerse
-// koruma sessizce kaybolur — o yüzden test ediyoruz.
+// Cookie attributes are what carry the security here: HttpOnly stops XSS,
+// SameSite stops CSRF, and Path narrows the CSRF surface to a single
+// endpoint. If any one of them regresses, the protection disappears
+// silently — that is why we test them explicitly.
 func TestLogin_SetsRefreshCookieWithSecureAttributes(t *testing.T) {
 	r, _, _, _, _ := loginFixture(t)
 
@@ -95,26 +96,26 @@ func TestLogin_SetsRefreshCookieWithSecureAttributes(t *testing.T) {
 
 	ck := refreshCookieOf(w)
 	if ck == nil {
-		t.Fatal("refresh cookie set edilmemiş")
+		t.Fatal("no refresh cookie was set")
 	}
 	if !ck.HttpOnly {
-		t.Error("HttpOnly değil — JavaScript token'ı okuyabilir")
+		t.Error("not HttpOnly — JavaScript could read the token")
 	}
 	if ck.SameSite != http.SameSiteStrictMode {
-		t.Errorf("SameSite=Strict bekleniyordu, gelen: %v", ck.SameSite)
+		t.Errorf("expected SameSite=Strict, got %v", ck.SameSite)
 	}
 	if ck.Path != auth.RefreshCookiePath {
-		t.Errorf("Path=%q bekleniyordu, gelen %q", auth.RefreshCookiePath, ck.Path)
+		t.Errorf("expected Path=%q, got %q", auth.RefreshCookiePath, ck.Path)
 	}
 	if ck.MaxAge <= 0 {
-		t.Errorf("MaxAge pozitif olmalı, gelen %d", ck.MaxAge)
+		t.Errorf("expected a positive MaxAge, got %d", ck.MaxAge)
 	}
 	if ck.Value == "" {
-		t.Error("cookie değeri boş")
+		t.Error("the cookie value is empty")
 	}
 }
 
-// Access token gövdede dönmeli — frontend onu bellekte tutacak.
+// The access token must be returned in the body — the frontend keeps it in memory.
 func TestLogin_ReturnsAccessTokenInBody(t *testing.T) {
 	r, _, _, _, user := loginFixture(t)
 
@@ -122,15 +123,15 @@ func TestLogin_ReturnsAccessTokenInBody(t *testing.T) {
 
 	claims, err := auth.ValidateToken(accessTokenOf(t, w))
 	if err != nil {
-		t.Fatalf("dönen access token doğrulanamadı: %v", err)
+		t.Fatalf("the returned access token failed validation: %v", err)
 	}
 	if claims.UserID != user.ID {
-		t.Errorf("token yanlış user_id taşıyor: %d", claims.UserID)
+		t.Errorf("token carries the wrong user_id: %d", claims.UserID)
 	}
 }
 
-// Ham refresh token ASLA saklanmamalı — sadece SHA-256 hash'i.
-// DB sızarsa oturumlar ele geçmesin diye.
+// The raw refresh token must NEVER be stored — only its SHA-256 hash,
+// so a database leak cannot hijack sessions.
 func TestLogin_StoresHashNotRawToken(t *testing.T) {
 	r, _, _, refreshRepo, _ := loginFixture(t)
 
@@ -138,10 +139,10 @@ func TestLogin_StoresHashNotRawToken(t *testing.T) {
 	raw := refreshCookieOf(w).Value
 
 	if _, found := refreshRepo.tokens[raw]; found {
-		t.Fatal("HAM token depoda bulundu — hash'lenmesi gerekiyordu")
+		t.Fatal("the RAW token was found in the store — it should have been hashed")
 	}
 	if _, found := refreshRepo.tokens[auth.HashRefreshToken(raw)]; !found {
-		t.Fatal("token'ın hash'i depoda yok")
+		t.Fatal("the token's hash is missing from the store")
 	}
 }
 
@@ -149,9 +150,8 @@ func TestLogin_StoresHashNotRawToken(t *testing.T) {
 // Refresh
 // ---------------------------------------------------------------------------
 
-// Her yenilemede YENİ refresh token verilmeli (rotasyon).
-// Çalınan bir token'ın ömrü, meşru kullanıcı bir sonraki yenilemeyi
-// yapana kadar sınırlı kalsın diye.
+// Every refresh must issue a NEW refresh token (rotation), so that a
+// stolen token's useful life is bounded by the legitimate user's next refresh.
 func TestRefresh_RotatesToken(t *testing.T) {
 	r, _, _, _, _ := loginFixture(t)
 	first := refreshCookieOf(doLogin(t, r))
@@ -159,17 +159,17 @@ func TestRefresh_RotatesToken(t *testing.T) {
 	w := performWithCookie(r, "POST", "/auth/refresh", "", first)
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d (%s)", w.Code, w.Body.String())
+		t.Fatalf("expected 200, got %d (%s)", w.Code, w.Body.String())
 	}
 	second := refreshCookieOf(w)
 	if second == nil {
-		t.Fatal("yenilemede yeni cookie set edilmedi")
+		t.Fatal("no new cookie was set on refresh")
 	}
 	if second.Value == first.Value {
-		t.Fatal("token DÖNMEDİ — rotasyon çalışmıyor")
+		t.Fatal("the token did NOT rotate — rotation is not working")
 	}
 	if accessTokenOf(t, w) == "" {
-		t.Fatal("yeni access token dönmedi")
+		t.Fatal("no new access token was returned")
 	}
 }
 
@@ -179,7 +179,7 @@ func TestRefresh_WithoutCookie_Returns401(t *testing.T) {
 	w := performRequest(r, "POST", "/auth/refresh", "")
 
 	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("beklenen 401, gelen %d", w.Code)
+		t.Fatalf("expected 401, got %d", w.Code)
 	}
 }
 
@@ -190,54 +190,55 @@ func TestRefresh_UnknownToken_Returns401(t *testing.T) {
 		&http.Cookie{Name: auth.RefreshCookieName, Value: "hic-boyle-bir-token-yok"})
 
 	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("beklenen 401, gelen %d", w.Code)
+		t.Fatalf("expected 401, got %d", w.Code)
 	}
 }
 
-// SIZINTI TESPİTİ — bu dosyadaki en önemli test.
+// LEAK DETECTION — the most important test in this file.
 //
-// Tüketilmiş bir refresh token tekrar sunulursa: ya saldırgan çaldı ya meşru
-// kullanıcı eskisini oynatıyor. Ayırt edemeyiz, o yüzden güvenli tarafa
-// geçip kullanıcının TÜM oturumlarını kapatıyoruz — saldırgan daha yeni
-// token'ı ele geçirmiş olsa bile işe yaramasın.
+// If an already-consumed refresh token is presented again, either an
+// attacker stole it or the legitimate user replayed an old one. We cannot
+// tell which, so we err on the safe side and revoke ALL of the user's
+// sessions — so that even if the attacker already grabbed the newest
+// token, it becomes useless.
 func TestRefresh_ReuseDetected_RevokesAllSessions(t *testing.T) {
 	r, _, _, refreshRepo, _ := loginFixture(t)
 	first := refreshCookieOf(doLogin(t, r))
 
-	// Meşru yenileme: first tüketilir, second üretilir.
+	// Legitimate refresh: first is consumed, second is issued.
 	okResp := performWithCookie(r, "POST", "/auth/refresh", "", first)
 	second := refreshCookieOf(okResp)
 
-	// Saldırgan (ya da kullanıcı) ESKİ token'ı tekrar sunuyor.
+	// An attacker (or the user) replays the OLD token.
 	reuse := performWithCookie(r, "POST", "/auth/refresh", "", first)
 	if reuse.Code != http.StatusUnauthorized {
-		t.Fatalf("yeniden kullanımda 401 bekleniyordu, gelen %d", reuse.Code)
+		t.Fatalf("expected 401 on reuse, got %d", reuse.Code)
 	}
 
-	// Kritik: HENÜZ KULLANILMAMIŞ olan second de artık geçersiz olmalı.
+	// Critical: second, which was NEVER used, must also be invalid now.
 	stored := refreshRepo.tokens[auth.HashRefreshToken(second.Value)]
 	if stored == nil {
-		t.Fatal("ikinci token depoda bulunamadı")
+		t.Fatal("the second token was not found in the store")
 	}
 	if stored.RevokedAt == nil {
-		t.Fatal("sızıntı tespit edildi ama diğer oturumlar iptal EDİLMEDİ")
+		t.Fatal("a leak was detected but the other sessions were NOT revoked")
 	}
 
-	// Uçtan uca doğrulama: second ile yenileme de başarısız olmalı.
+	// End-to-end check: refreshing with second must also fail.
 	after := performWithCookie(r, "POST", "/auth/refresh", "", second)
 	if after.Code != http.StatusUnauthorized {
-		t.Fatalf("iptal sonrası 401 bekleniyordu, gelen %d", after.Code)
+		t.Fatalf("expected 401 after revocation, got %d", after.Code)
 	}
 }
 
-// Rol refresh token'ın İÇİNE gömülmemeli: yetkisi alınan kullanıcı,
-// token'ı geçerli olduğu sürece eski yetkisini korumamalı.
-// Her yenilemede kullanıcı TAZE okunuyor.
+// The role must NOT be embedded inside the refresh token: a user whose
+// privileges were revoked must not keep the old ones for as long as the
+// token remains valid. The user is read FRESH on every refresh.
 func TestRefresh_UsesFreshRole(t *testing.T) {
 	r, userRepo, _, _, user := loginFixture(t)
 	first := refreshCookieOf(doLogin(t, r))
 
-	// Kullanıcı bu arada admin yapılıyor.
+	// The user is made an admin in the meantime.
 	userRepo.users[user.Username].Role = models.RoleAdmin
 
 	w := performWithCookie(r, "POST", "/auth/refresh", "", first)
@@ -247,14 +248,14 @@ func TestRefresh_UsesFreshRole(t *testing.T) {
 
 	claims, err := auth.ValidateToken(accessTokenOf(t, w))
 	if err != nil {
-		t.Fatalf("token doğrulanamadı: %v", err)
+		t.Fatalf("token validation failed: %v", err)
 	}
 	if claims.Role != models.RoleAdmin {
-		t.Fatalf("yeni access token TAZE rolü taşımalıydı, gelen %q", claims.Role)
+		t.Fatalf("the new access token should carry the FRESH role, got %q", claims.Role)
 	}
 }
 
-// Kullanıcı silinmişse oturum devam etmemeli.
+// If the user has been deleted, the session must not continue.
 func TestRefresh_DeletedUser_Returns401(t *testing.T) {
 	r, userRepo, _, _, user := loginFixture(t)
 	first := refreshCookieOf(doLogin(t, r))
@@ -263,7 +264,7 @@ func TestRefresh_DeletedUser_Returns401(t *testing.T) {
 
 	w := performWithCookie(r, "POST", "/auth/refresh", "", first)
 	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("beklenen 401, gelen %d", w.Code)
+		t.Fatalf("expected 401, got %d", w.Code)
 	}
 }
 
@@ -271,11 +272,12 @@ func TestRefresh_DeletedUser_Returns401(t *testing.T) {
 // Logout
 // ---------------------------------------------------------------------------
 
-// Logout üç işi birden yapmalı:
-//  1. cookie'yi tarayıcıdan sil
-//  2. refresh token'ı DB'de iptal et  (cookie silmek TEK BAŞINA yetmez:
-//     değeri kopyalayan biri kullanmaya devam edebilirdi)
-//  3. access token'ın jti'sini kara listeye al (15 dk da olsa çalışmasın)
+// Logout must do three things at once:
+//  1. clear the cookie from the browser
+//  2. revoke the refresh token in the DB (clearing the cookie ALONE is not
+//     enough: anyone who copied the value could keep using it)
+//  3. blacklist the access token's jti (so it cannot work even for its
+//     remaining 15 minutes)
 func TestLogout_ClearsCookieAndRevokesBoth(t *testing.T) {
 	r, _, tokenRepo, refreshRepo, _ := loginFixture(t)
 	loginResp := doLogin(t, r)
@@ -283,31 +285,31 @@ func TestLogout_ClearsCookieAndRevokesBoth(t *testing.T) {
 
 	w := performWithCookie(r, "POST", "/auth/logout", "", ck)
 	if w.Code != http.StatusOK {
-		t.Fatalf("beklenen 200, gelen %d (%s)", w.Code, w.Body.String())
+		t.Fatalf("expected 200, got %d (%s)", w.Code, w.Body.String())
 	}
 
-	// 1) cookie silinmiş mi
+	// 1) was the cookie cleared
 	cleared := refreshCookieOf(w)
 	if cleared == nil {
-		t.Fatal("logout cookie temizleme başlığı göndermedi")
+		t.Fatal("logout did not send a cookie-clearing header")
 	}
 	if cleared.MaxAge >= 0 || cleared.Value != "" {
-		t.Fatalf("cookie temizlenmemiş: value=%q maxAge=%d", cleared.Value, cleared.MaxAge)
+		t.Fatalf("the cookie was not cleared: value=%q maxAge=%d", cleared.Value, cleared.MaxAge)
 	}
 
-	// 2) refresh token DB'de iptal mi
+	// 2) was the refresh token revoked in the DB
 	stored := refreshRepo.tokens[auth.HashRefreshToken(ck.Value)]
 	if stored == nil || stored.RevokedAt == nil {
-		t.Fatal("refresh token iptal edilmedi")
+		t.Fatal("the refresh token was not revoked")
 	}
 
-	// 3) access token'ın jti'si kara listede mi (authAs "test-jti" set ediyor)
+	// 3) is the access token's jti on the denylist (authAs sets "test-jti")
 	if !tokenRepo.revoked["test-jti"] {
-		t.Fatal("access token jti'si iptal edilmedi")
+		t.Fatal("the access token's jti was not revoked")
 	}
 }
 
-// Logout'tan sonra eski refresh token ile yenileme yapılamamalı.
+// After logout, refreshing with the old refresh token must fail.
 func TestLogout_ThenRefresh_Returns401(t *testing.T) {
 	r, _, _, _, _ := loginFixture(t)
 	ck := refreshCookieOf(doLogin(t, r))
@@ -316,6 +318,6 @@ func TestLogout_ThenRefresh_Returns401(t *testing.T) {
 
 	w := performWithCookie(r, "POST", "/auth/refresh", "", ck)
 	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("logout sonrası 401 bekleniyordu, gelen %d", w.Code)
+		t.Fatalf("expected 401 after logout, got %d", w.Code)
 	}
 }
