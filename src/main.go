@@ -204,7 +204,10 @@ func main() {
 	// Üç tablo da (revoked_tokens, pending_actions, refresh_tokens) her
 	// kullanımda satır biriktiriyor ve hiçbiri kendini temizlemiyordu.
 	cleanupCtx, stopCleanup := context.WithCancel(context.Background())
-	cleaner := maintenance.NewCleaner(tokenRepo, pendingRepo, refreshRepo, maintenance.DefaultInterval)
+	// UseRedisLock(nil) zararsız: Redis devre dışıysa kilit atlanır, Cleaner
+	// koşulsuz çalışır (RATIO: az olasılıklı israf, tek kopyada anlamsız).
+	cleaner := maintenance.NewCleaner(tokenRepo, pendingRepo, refreshRepo, maintenance.DefaultInterval).
+		UseRedisLock(database.RDB)
 	go cleaner.Start(cleanupCtx)
 
 	srv := &http.Server{

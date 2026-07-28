@@ -17,7 +17,17 @@ import (
 	"context"
 	"log"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
+
+// cleanerLockKey — LİDER KİLİDİ, çok kopyalı dağıtım için.
+//
+// NEDEN GEREKLİ: her app kopyası kendi Cleaner.Start goroutine'ini bağımsız
+// çalıştırır. Kilit olmadan N kopya her saat AYNI üç DELETE sorgusunu N kez
+// atar — yanlış değil, sadece israf. Aynı desen repositories.StartWarmUpLoop
+// için de kullanıldı (SET NX ile "yoksa yaz").
+const cleanerLockKey = "cleaner:lock"
 
 // DefaultInterval — saatte bir yeterli. Bu iş aceleye gelmez;
 // amaç tabloyu sınırlı tutmak, anında temizlemek değil.
@@ -28,6 +38,11 @@ type Cleaner struct {
 	pending  repositories.PendingActionRepository
 	refresh  repositories.RefreshTokenRepository
 	interval time.Duration
+
+	// rdb — nil olabilir. Redis yoksa (REDIS_ADDR ayarlanmamış) kilit
+	// atlanır, Cleaner eskisi gibi koşulsuz çalışır: tek kopya varsayımı,
+	// israf riski yok.
+	rdb *redis.Client
 }
 
 func NewCleaner(
@@ -40,6 +55,15 @@ func NewCleaner(
 		interval = DefaultInterval
 	}
 	return &Cleaner{tokens: tokens, pending: pending, refresh: refresh, interval: interval}
+}
+
+// UseRedisLock — çok kopyalı dağıtımda yalnızca bir kopyanın temizlik
+// yapmasını sağlar. rdb nil verilirse (Redis devre dışıysa) hiçbir şey
+// değişmez — NewCleaner'ın imzasını bozmamak için ayrı, isteğe bağlı bir
+// adım olarak tasarlandı.
+func (c *Cleaner) UseRedisLock(rdb *redis.Client) *Cleaner {
+	c.rdb = rdb
+	return c
 }
 
 // Report — bir temizlik turunun sonucu. Test edilebilirlik ve loglama için.
@@ -89,7 +113,7 @@ func (c *Cleaner) RunOnce(ctx context.Context, now time.Time) Report {
 // time.Sleep yerine ticker + select kullanıyoruz: kapanma sinyali gelince
 // bir saat beklemeden çıkabilelim.
 func (c *Cleaner) Start(ctx context.Context) {
-	c.logRun(c.RunOnce(ctx, time.Now()))
+	c.logRun(c.runIfLeader(ctx, time.Now()))
 
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
@@ -100,9 +124,31 @@ func (c *Cleaner) Start(ctx context.Context) {
 			log.Println("cleanup worker stopped")
 			return
 		case <-ticker.C:
-			c.logRun(c.RunOnce(ctx, time.Now()))
+			c.logRun(c.runIfLeader(ctx, time.Now()))
 		}
 	}
+}
+
+// runIfLeader — Redis varsa SET NX ile kilidi almayı dener, yoksa (rdb nil)
+// koşulsuz çalışır. Kilidin TTL'i c.interval kadar: kilidi alan kopya çökse
+// bile bir sonraki tur başka bir kopya devralır. Kimin aldığı önemli değil,
+// yalnızca birinin alması önemli — repositories.StartWarmUpLoop'taki
+// runWarmUpIfLeader ile aynı gerekçe.
+func (c *Cleaner) runIfLeader(ctx context.Context, now time.Time) Report {
+	if c.rdb == nil {
+		return c.RunOnce(ctx, now)
+	}
+
+	acquired, err := c.rdb.SetNX(ctx, cleanerLockKey, 1, c.interval).Result()
+	if err != nil {
+		log.Println("cleanup: lock check failed, skipping this turn:", err)
+		return Report{}
+	}
+	if !acquired {
+		return Report{} // başka bir kopya bu turu üstlendi
+	}
+
+	return c.RunOnce(ctx, now)
 }
 
 // logRun — sadece bir şey silindiyse logla. Boş turlar log'u kirletmesin.
