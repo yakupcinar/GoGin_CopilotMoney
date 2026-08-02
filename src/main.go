@@ -173,7 +173,7 @@ func main() {
 	r.Use(middleware.RequestLogger())
 	r.Use(gin.Recovery())
 
-	r.POST("/register", middleware.Limit(authLimiter, middleware.KeyByIP), authHandler.Register)
+	r.POST("/register", middleware.Limit(authLimiter, middleware.KeyByIP), authHandler.Register)	
 	r.POST("/login", middleware.Limit(authLimiter, middleware.KeyByIP), authHandler.Login)
 
 	// /auth/refresh KORUMASIZ olmalı: buraya zaten access token'ın süresi

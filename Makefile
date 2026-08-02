@@ -17,7 +17,7 @@ test-integration:
 
 # --- Docker ---
 docker-up:      ## sistemi ayağa kaldır (build + arka plan)
-	docker compose up --build -d
+		
 docker-down:    ## durdur (veritabanı volume KORUNUR)
 	docker compose down
 docker-logs:    ## uygulama loglarını takip et

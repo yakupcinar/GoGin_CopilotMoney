@@ -85,5 +85,5 @@ func ValidateToken(tokenString string) (*TokenClaims, error) {
 }
 
 // token invalid çek süre kontrolü. verilen süre öncesi expire olmadan
-//Tokeni kullanıcı logout olsa bile duruyor bakılacak !
-// Burada t.Method'un gerçekten HS256 olup olmadığı kontrol edilmiyor. s
+// Tokeni kullanıcı logout olsa bile duruyor bakılacak !
+// Burada t.Method'un gerçekten HS256 olup olmadığı kontrol edilmiyor.

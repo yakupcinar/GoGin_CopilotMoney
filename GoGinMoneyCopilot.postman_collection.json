@@ -1,0 +1,931 @@
+{
+  "info": {
+    "name": "GoGinMoneyCopilot",
+    "description": "GoGinMoneyCopilot — tum endpoint'ler.\n\nKULLANIM SIRASI\n1. Auth > Register (bir kez)\n2. Auth > Login  -> access_token otomatik kaydedilir\n3. Accounts > Create, sonra account_id degiskenini elle gir\n4. Categories > List -> category_id otomatik kaydedilir\n5. Geri kalan her sey calisir\n\nDEGISKENLER\nbase_url, access_token, account_id, category_id, transaction_id, action_token\n\nNOTLAR\n- Bearer token koleksiyon seviyesinde tanimli; public istekler 'No Auth' ile ezildi.\n- Refresh token HttpOnly cookie'dir; Postman cookie'yi kendisi tasir, elle bir sey yapma.\n- Test script'leri sadece Postman kolayligidir (token kopyalamamak icin).\n  Uygulama kodu degildir, frontend'e de girmez.\n- POST endpoint'leri olusturulan kaydin id'sini DONDURMUYOR; id gereken yerde\n  once GET/List cagirman gerekiyor.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "access_token",
+      "value": ""
+    },
+    {
+      "key": "account_id",
+      "value": "1"
+    },
+    {
+      "key": "category_id",
+      "value": "1"
+    },
+    {
+      "key": "transaction_id",
+      "value": "1"
+    },
+    {
+      "key": "action_token",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1 - Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/register",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "register"
+              ]
+            },
+            "description": "username: 3-20 karakter, sadece harf+rakam. password: 8-30 karakter.\nIP basina rate limit var (AUTH_RATE_PER_MIN, varsayilan 10/dk).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"testuser\",\n  \"password\": \"dogrusifre123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "login"
+              ]
+            },
+            "description": "Access token GOVDEDE doner (frontend bellekte tutar).\nRefresh token HttpOnly cookie olarak set edilir (Path=/auth).\nTest script'i token'i access_token degiskenine yazar.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"testuser\",\n  \"password\": \"dogrusifre123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const t = pm.response.json().token;",
+                  "    if (t) { pm.collectionVariables.set('access_token', t); }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/refresh",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "Govde YOK. Kimlik refresh cookie'sinden gelir.\nHer cagrida token DONER (rotation): eski cookie gecersizlesir.\nAyni cookie'yi ikinci kez kullanirsan sizinti sayilir ve TUM oturumlar iptal edilir.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const t = pm.response.json().token;",
+                  "    if (t) { pm.collectionVariables.set('access_token', t); }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Uc is birden: cookie temizlenir, refresh token DB'de iptal edilir,\naccess token'in jti'si denylist'e yazilir."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2 - Accounts",
+      "item": [
+        {
+          "name": "Create account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/accounts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "description": "name: max 30, sadece harf/rakam/bosluk (accountname validator, Turkce harf gecer).\nDIKKAT: cevap id DONDURMUYOR. account_id degiskenini elle gir.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ana Hesap\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get account",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/accounts/{{account_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "accounts",
+                "{{account_id}}"
+              ]
+            },
+            "description": "Baskasinin hesabini isterse 404 doner (403 degil) - varlik sizdirmamak icin."
+          },
+          "response": []
+        },
+        {
+          "name": "Update account",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/accounts/{{account_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "accounts",
+                "{{account_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ana Hesap v2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete account",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/accounts/{{account_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "accounts",
+                "{{account_id}}"
+              ]
+            },
+            "description": "Hesapta islem varsa 409: FK kisiti (23503) -> ErrAccountInUse."
+          },
+          "response": []
+        },
+        {
+          "name": "List account transactions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/accounts/{{account_id}}/transactions?page=1&page_size=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "accounts",
+                "{{account_id}}",
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Sayfalama: page (varsayilan 1), page_size (varsayilan 20)."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const b = pm.response.json();",
+                  "    const list = b.transactions || b.data || b;",
+                  "    if (Array.isArray(list) && list.length) {",
+                  "        pm.collectionVariables.set('transaction_id', list[0].id);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3 - Categories",
+      "item": [
+        {
+          "name": "Create category",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/categories",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "categories"
+              ]
+            },
+            "description": "type: 'income' veya 'expense' (baska deger 400).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Market\",\n  \"type\": \"expense\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List categories",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/categories",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "categories"
+              ]
+            },
+            "description": "Kullanicinin kendi kategorileri + global kategoriler (UserID == nil).\nTest script'i ilk kategorinin id'sini category_id'ye yazar."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const list = pm.response.json();",
+                  "    if (Array.isArray(list) && list.length) {",
+                  "        pm.collectionVariables.set('category_id', list[0].id);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update category",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/categories/{{category_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "categories",
+                "{{category_id}}"
+              ]
+            },
+            "description": "Global kategori (user_id null) guncellenemez.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Market\",\n  \"type\": \"expense\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete category",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/categories/{{category_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "categories",
+                "{{category_id}}"
+              ]
+            },
+            "description": "Kategori bir islemde veya butcede kullaniliyorsa 409 -> ErrCategoryInUse."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4 - Transactions",
+      "item": [
+        {
+          "name": "Create transaction",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "transaction_date RFC3339 olmali. amount > 0 zorunlu.\nNOT: account_id/category_id degisken oldugu icin Postman string gonderir;\nhata alirsan tirnaklari kaldirip sayi yaz.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{account_id}}\",\n  \"category_id\": \"{{category_id}}\",\n  \"amount\": 149.9,\n  \"type\": \"expense\",\n  \"description\": \"kahve\",\n  \"transaction_date\": \"2026-07-30T12:00:00Z\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get transaction",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions/{{transaction_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions",
+                "{{transaction_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Update transaction",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/transactions/{{transaction_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions",
+                "{{transaction_id}}"
+              ]
+            },
+            "description": "TAM DEGISTIRME: tum alanlar yeniden gonderilir, kismi guncelleme yok.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category_id\": \"{{category_id}}\",\n  \"amount\": 199.9,\n  \"type\": \"expense\",\n  \"description\": \"kahve (duzeltildi)\",\n  \"transaction_date\": \"2026-07-30T12:00:00Z\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete transaction",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions/{{transaction_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions",
+                "{{transaction_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "5 - Budgets",
+      "item": [
+        {
+          "name": "Create budget",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/budgets",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "budgets"
+              ]
+            },
+            "description": "start_date 'YYYY-MM-DD' (saat dilimi belirsizligi olmasin diye string).\nperiod_days 1-365 (DB'de CHECK kisiti da var).\nKullanici basina TEK butce: ikincisi 409 -> ErrBudgetExists.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Aylik\",\n  \"start_date\": \"2026-07-01\",\n  \"period_days\": 30,\n  \"categories\": [\n    {\n      \"category_id\": \"{{category_id}}\",\n      \"limit_amount\": 5000\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get budget",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/budgets?offset=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "budgets"
+              ],
+              "query": [
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "offset=0 su anki donem, -1 onceki donem, 1 sonraki.\nCok buyuk offset 'period range is too large' dondurur (Duration tasmasi korumasi)."
+          },
+          "response": []
+        },
+        {
+          "name": "Update budget",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/budgets",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "budgets"
+              ]
+            },
+            "description": "TAM DEGISTIRME: gonderilmeyen kategori satirlari SILINIR.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Aylik\",\n  \"start_date\": \"2026-07-01\",\n  \"period_days\": 30,\n  \"categories\": [\n    {\n      \"category_id\": \"{{category_id}}\",\n      \"limit_amount\": 7500\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete budget",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/budgets",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "budgets"
+              ]
+            },
+            "description": "URL'de id yok - kullanici basina tek butce oldugu icin."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "6 - Chat (AI)",
+      "item": [
+        {
+          "name": "Chat - islem olustur (taslak)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "chat"
+              ]
+            },
+            "description": "AI serbest metni ayristirir ve TASLAK dondurur (results[].payload).\nVERITABANINA YAZMAZ - taslagi POST /transactions'a sen gonderirsin.\nPlan bazli rate limit: free 5/dk, pro 30/dk.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"bugun kahveye 50 lira harcadim\",\n  \"account_id\": \"{{account_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - butce goruntule",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "chat"
+              ]
+            },
+            "description": "Okuma niyeti (RiskRead): onay gerektirmez, results[].data doner.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"butcemi goster\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - silme (onay ister)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "chat"
+              ]
+            },
+            "description": "Yikici niyet: hemen SILMEZ, tek kullanimlik onay token'i uretir.\nTest script'i token'i action_token degiskenine yazar.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"market kategorisini sil\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const r = (pm.response.json().results || [])[0];",
+                  "    if (r && r.token) { pm.collectionVariables.set('action_token', r.token); }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Chat - bos metin (400 bekleniyor)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "chat"
+              ]
+            },
+            "description": "Girdi siniri AI'DAN ONCE calisir - bosuna LLM token'i harcanmaz.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - cok uzun metin (400 bekleniyor)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "chat"
+              ]
+            },
+            "description": "max=500. Bu da AI cagrilmadan reddedilir.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Confirm - onayi calistir",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/actions/confirm",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "actions",
+                "confirm"
+              ]
+            },
+            "description": "Saklanmis karari uygular. AI CAGRILMAZ.\nToken tek kullanimlik: ikinci kez 400.\nHedef bu arada degistiyse 409 (TOCTOU korumasi).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{action_token}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Confirm - uydurma token (400 bekleniyor)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/actions/confirm",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "actions",
+                "confirm"
+              ]
+            },
+            "description": "Baskasinin token'i ile olmayan token AYNI cevabi dondurur -\naksi halde token'in varligi sizardi.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"act_hicboylebirtokenyok\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
